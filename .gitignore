@@ -1,0 +1,13 @@
+# By default, ignore everything...
+/*
+
+# ... except these directories
+!/src/
+
+# ... except these specific files
+!/.gitignore
+!/LICENSE.txt
+!/README.rst
+!/requirements.txt
+!/setup.py
+
