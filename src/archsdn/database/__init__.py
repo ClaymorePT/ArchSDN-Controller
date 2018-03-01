@@ -18,6 +18,8 @@ __all__ = [
     "query_address_information",
     "remove_client",
     "update_client_addresses",
+    "query_volatile_info",
+    "update_volatile_information",
     "ClientNotRegistered",
     "ClientAlreadyRegistered",
     "DatapathNotRegistered",
@@ -39,7 +41,7 @@ import logging
 #from eventlet.event import Event
 #from eventlet import spawn
 
-from archsdn.helpers import logger_module_name, custom_logging_callback
+from archsdn.helpers import logger_module_name
 
 from archsdn.database.internals.generic import initialise as __initialise
 from archsdn.database.internals.generic import infos as __get_database_info
@@ -71,12 +73,13 @@ from archsdn.database.internals.exceptions import \
     Address_Not_Registered as __Address_Not_Registered
 
 from archsdn.database.volatile_data import \
-    QueryVolatileInfo as __QueryVolatileInfo, \
-    UpdateVolatileInformation as __UpdateVolatileInformation
+    query_volatile_info as __query_volatile_info, \
+    update_volatile_information as __update_volatile_information
 
 
 _callbacks = {
     "initialise": __initialise,
+    "close": __close,
     "get_database_info": __get_database_info,
     "register_datapath": __register_datapath,
     "is_datapath_registered": __is_datapath_registered,
@@ -94,7 +97,8 @@ _callbacks = {
     "query_address_info": __query_address_information,
     "remove_client": __remove_client,
     "update_client_addresses": __update_client_addresses,
-    "close": __close
+    "query_volatile_info": __query_volatile_info,
+    "update_volatile_information": __update_volatile_information
 }
 
 _exceptions = {
@@ -105,8 +109,6 @@ _exceptions = {
     "Flow_AlreadyRegistered": __Flow_Already_Registered,
     "FlowNotRegistered": __Flow_Not_Registered,
     "AddressNotRegistered": __Address_Not_Registered,
-    "QueryVolatileInfo": __QueryVolatileInfo,
-    "UpdateVolatileInformation": __UpdateVolatileInformation
 }
 
 _log = logging.getLogger(logger_module_name(__file__))

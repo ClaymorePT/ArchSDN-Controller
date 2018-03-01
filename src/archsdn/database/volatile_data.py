@@ -9,7 +9,7 @@ _ipv6_service = None
 _mac_service = None
 
 
-def UpdateVolatileInformation(
+def update_volatile_information(
         ipv4_network = None,
         ipv6_network = None,
         ipv4_service = None,
@@ -36,7 +36,7 @@ def UpdateVolatileInformation(
         _mac_service = mac_service
 
 
-def QueryVolatileInfo():
+def query_volatile_info():
     return {
         'ipv4_network': IPv4Network(_ipv4_network),
         'ipv6_network': IPv6Network(_ipv6_network),

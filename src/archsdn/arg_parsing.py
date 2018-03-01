@@ -72,26 +72,59 @@ def validate_port(port):
 def parse_arguments():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--logLevel", help="Logging Level (default: %(default)s)", type=str,
-                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO")
-    parser.add_argument("-s", "--storage", help="SQLite3 Database Location (default: %(default)s)",
-                        type=validate_path, default=':memory:')
     parser.add_argument(
-        "-id", "--uuid", help="Controller UUID (default: %(default)s)", default='random', type=validate_id
+        "-l", "--logLevel",
+        help="Logging Level (default: %(default)s)",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+        type=str
     )
     parser.add_argument(
-        "-ip", "--ip", help="Controller IP (default: %(default)s)", default='0.0.0.0', type=validate_address
+        "-s", "--storage",
+        help="SQLite3 Database Location (default: %(default)s)",
+        default=':memory:',
+        type=validate_path
     )
     parser.add_argument(
-        "-p", "--port", help="Controller Port (default: %(default)s)", type=int, default=12345
+        "-id", "--uuid",
+        help="Controller UUID (default: %(default)s)",
+        default='random',
+        type=validate_id
     )
-    parser.add_argument("-cip", "--cip", help="Central Management Server IP ", type=validate_address)
     parser.add_argument(
-        "-cp", "--cport", help="Central Management Server Port (default: %(default)s)", type=int, default=12345
+        "-ip", "--ip",
+        help="Controller IP (default: %(default)s)",
+        default='0.0.0.0',
+        type=validate_address
     )
-    parser.add_argument("-ofip", "--ofip", help="OpenFlow Service IP ", type=validate_address)
     parser.add_argument(
-        "-ofp", "--ofport", help="OpenFlow Service Port (default: %(default)s)", type=int, default=6631
+        "-p", "--port",
+        help="Controller Port (default: %(default)s)",
+        default=12345,
+        type=int
+    )
+    parser.add_argument(
+        "-cip", "--cip",
+        help="Central Management Server IP (default: %(default)s)",
+        default='127.0.0.1',
+        type=validate_address
+    )
+    parser.add_argument(
+        "-cp", "--cport",
+        help="Central Management Server Port (default: %(default)s)",
+        default=12345,
+        type=int
+    )
+    parser.add_argument(
+        "-ofip", "--ofip",
+        help="OpenFlow Service IP ",
+        type=validate_address
+    )
+    parser.add_argument(
+        "-ofp", "--ofport",
+        help="OpenFlow Service Port (default: %(default)s)",
+        default=6631,
+        type=int
     )
 
     return parser.parse_args()
