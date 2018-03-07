@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from copy import copy, deepcopy
 from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address
 from enum import IntFlag
@@ -13,7 +12,7 @@ from archsdn.engine.exceptions import PortAlreadyRegistered, PortNotRegistered
 class Entity(ABC):
 
     def __repr__(self):
-        return "<{:s} type> object at address 0x{:x}".format(type(self).__name__, id(self))
+        return "<{:s} type> object at address 0x{:X}".format(type(self).__name__, id(self))
 
     @abstractmethod
     def __str__(self):
@@ -152,19 +151,21 @@ class Switch(Entity):
 
 class Host(Entity):
     def __init__(self, hostname, mac, ipv4=None, ipv6=None):
-        assert isinstance(hostname, str), "hostname is not str.  Got {:s}".format(
-            repr(hostname)
-        )
+        assert isinstance(hostname, str), \
+            "hostname is not str.  Got {:s}".format(repr(hostname))
         assert len(hostname) != 0, "hostname length cannot be zero"
-        assert isinstance(mac, EUI), "mac is not an EUI object.  Got {:s}".format(
-            repr(mac)
-        )
+        assert isinstance(mac, EUI), \
+            "mac is not an EUI object.  Got {:s}".format(repr(mac))
+        assert isinstance(ipv4, (IPv4Address, type(None))), \
+            "ipv4 is not None or instance of IPv4Address. Got {:s}".format(repr(ipv4))
+        assert isinstance(ipv6, (IPv6Address, type(None))), \
+            "ipv4 is not None or instance of IPv6Address. Got {:s}".format(repr(ipv6))
+        assert not (ipv4 is None and ipv6 is None), "ipv4 and ipv6 cannot be None at the same time"
 
         self.__hostname = hostname
         self.__mac = mac
         self.__ipv4 = ipv4
         self.__ipv6 = ipv6
-
 
     def __str__(self):
         return "<Host type> object at address 0x{:x}: hostname= {:s}; mac= {:s}; ipv4= {:s};  ipv6= {:s}".format(
@@ -187,7 +188,7 @@ class Host(Entity):
 
         :return:
         '''
-        return copy(self.__mac)
+        return self.__mac
 
     @property
     def ipv4(self):
@@ -195,7 +196,7 @@ class Host(Entity):
 
         :return:
         '''
-        return copy(self.__ipv4)
+        return self.__ipv4
 
     @property
     def ipv6(self):
@@ -203,7 +204,7 @@ class Host(Entity):
 
         :return:
         '''
-        return copy(self.__ipv6)
+        return self.__ipv6
 
 
 class Sector(Entity):
@@ -212,6 +213,7 @@ class Sector(Entity):
             repr(controller_id)
         )
         self.__controller_id = controller_id
+        self.__ports = set()
 
     def __str__(self):
         return "<Sector type> object at address 0x{:x}: controller_id= {:s};".format(
@@ -226,5 +228,18 @@ class Sector(Entity):
         '''
             Gets the Sector Identification
         '''
-        return copy(self.__controller_id)
+        return self.__controller_id
 
+    def register_port(self, mac):
+        assert isinstance(mac, EUI), "mac is not EUI. Got {:s}".format(repr(mac))
+
+        if mac in self.__ports:
+            raise PortAlreadyRegistered()
+        self.__ports.add(mac)
+
+    def remove_port(self, mac):
+        assert isinstance(mac, EUI), "mac is not EUI. Got {:s}".format(repr(mac))
+
+        if mac not in self.__ports:
+            raise PortNotRegistered()
+        self.__ports.remove(mac)
