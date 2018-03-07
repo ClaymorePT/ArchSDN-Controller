@@ -22,7 +22,6 @@ def process_datapath_event(dp_event):
         _log.info("Switch Disconnect Event: {}".format(str(dp_event.dp.__dict__)))
 
 
-
 def process_packet_in_event(packet_in_event):
     assert __default_configs, "engine not initialised"
 

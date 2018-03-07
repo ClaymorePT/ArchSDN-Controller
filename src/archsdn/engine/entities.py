@@ -1,7 +1,13 @@
 from abc import ABC, abstractmethod
+from copy import copy, deepcopy
+from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address
+from enum import IntFlag
 
-from ryu.ofproto.ofproto_protocol import _supported_versions
+from netaddr import EUI
+
+from ryu.ofproto.ofproto_protocol import _versions, _supported_versions
+from archsdn.engine.exceptions import PortAlreadyRegistered, PortNotRegistered
 
 
 class Entity(ABC):
@@ -24,6 +30,35 @@ class Entity(ABC):
 
 
 class Switch(Entity):
+    class PORT_CONFIG(IntFlag):
+        OFPPC_PORT_DOWN = 1 << 0
+        OFPPC_NO_RECV  = 1 << 2
+        OFPPC_NO_FWD = 1 << 5
+        OFPPC_NO_PACKET_IN  = 1 << 6
+
+    class PORT_STATE(IntFlag):
+        OFPPS_LINK_DOWN = 1 << 0
+        OFPPS_BLOCKED  = 1 << 1
+        OFPPS_LIVE = 1 << 2
+
+    class PORT_FEATURES(IntFlag):
+        OFPPF_10MB_HD = 1 << 0
+        OFPPF_10MB_FD = 1 << 1
+        OFPPF_100MB_HD = 1 << 2
+        OFPPF_100MB_FD = 1 << 3
+        OFPPF_1GB_HD = 1 << 4
+        OFPPF_1GB_FD = 1 << 5
+        OFPPF_10GB_FD = 1 << 6
+        OFPPF_40GB_FD = 1 << 7
+        OFPPF_100GB_FD = 1 << 8
+        OFPPF_1TB_FD = 1 << 9
+        OFPPF_OTHER = 1 << 10
+        OFPPF_COPPER = 1 << 11
+        OFPPF_FIBER = 1 << 12
+        OFPPF_AUTONEG = 1 << 13
+        OFPPF_PAUSE = 1 << 14
+        OFPPF_PAUSE_ASYM = 1 << 15
+
     def __init__(self, id, control_ip, control_port, of_version):
         assert isinstance(id, int), "dp is not an int instance. Got {:s}".format(
             repr(id)
@@ -68,5 +103,128 @@ class Switch(Entity):
 
     @property
     def ports(self):
-        return self.ports
+        return self.__ports
+
+    def register_port(
+            self,
+            port_no, hw_addr, name, config, state, curr, advertised, supported, peer, curr_speed, max_speed
+        ):
+        assert isinstance(port_no, int), "port_no is not int. Got {:s}".format(repr(port_no))
+        assert 1 <= port_no <= 0xFFFFFFFFFFFFFFFF, "1 <= port_no <= 0xFFFFFFFFFFFFFFFF. Got {:d}".format(port_no)
+        assert isinstance(hw_addr, EUI), "hw_addr is not EUI. Got {:s}".format(repr(hw_addr))
+        assert isinstance(name, str), "name is not str. Got {:s}".format(repr(name))
+        assert isinstance(config, Switch.PORT_CONFIG), "config is not Switch.PORT_CONFIG. Got {:s}".format(repr(config))
+        assert isinstance(state, Switch.PORT_STATE), "state is not Switch.PORT_STATE. Got {:s}".format(repr(state))
+        assert isinstance(curr, Switch.PORT_FEATURES), "curr is not Switch.PORT_FEATURES. Got {:s}".format(repr(curr))
+        assert isinstance(advertised, Switch.PORT_FEATURES), "advertised is not Switch.PORT_FEATURES. Got {:s}".format(repr(advertised))
+        assert isinstance(supported, Switch.PORT_FEATURES), "supported is not Switch.PORT_FEATURES. Got {:s}".format(repr(supported))
+        assert isinstance(peer, Switch.PORT_FEATURES), "peer is not Switch.PORT_FEATURES. Got {:s}".format(repr(peer))
+        assert isinstance(max_speed, int), "max_speed is not int. Got {:s}".format(repr(max_speed))
+        assert 0 <= max_speed <= 0xFFFFFFFFFFFFFFFF, "0 <= max_speed <= 0xFFFFFFFFFFFFFFFF. Got {:d}".format(
+            max_speed)
+        assert isinstance(curr_speed, int), "curr_speed is not int. Got {:s}".format(repr(curr_speed))
+        assert 0 <= curr_speed <= max_speed, "0 <= curr_speed <= max_speed. Got {:d}".format(curr_speed)
+
+        if port_no in self.__ports:
+            raise PortAlreadyRegistered()
+
+        self.__ports[port_no] = {
+            'hw_addr': hw_addr,
+            'name': name,
+            'config': config,
+            'state': state,
+            'curr': curr,
+            'advertised': advertised,
+            'supported': supported,
+            'peer': peer,
+            'curr_speed': curr_speed,
+            'max_speed': max_speed
+        }
+
+    def remove_port(self, port_no):
+        assert isinstance(port_no, int), "port_no is not int. Got {:s}".format(repr(port_no))
+        assert 1 <= port_no <= 0xFFFFFFFFFFFFFFFF, "1 <= port_no <= 0xFFFFFFFFFFFFFFFF. Got {:d}".format(port_no)
+
+        if port_no not in self.__ports:
+            raise PortNotRegistered()
+        del self.__ports[port_no]
+
+
+class Host(Entity):
+    def __init__(self, hostname, mac, ipv4=None, ipv6=None):
+        assert isinstance(hostname, str), "hostname is not str.  Got {:s}".format(
+            repr(hostname)
+        )
+        assert len(hostname) != 0, "hostname length cannot be zero"
+        assert isinstance(mac, EUI), "mac is not an EUI object.  Got {:s}".format(
+            repr(mac)
+        )
+
+        self.__hostname = hostname
+        self.__mac = mac
+        self.__ipv4 = ipv4
+        self.__ipv6 = ipv6
+
+
+    def __str__(self):
+        return "<Host type> object at address 0x{:x}: hostname= {:s}; mac= {:s}; ipv4= {:s};  ipv6= {:s}".format(
+            id(self), str(self.__hostname), str(self.__mac), str(self.__ipv4), str(self.__ipv6)
+        )
+
+    def __hash__(self):
+        return hash(self.__hostname)
+
+    @property
+    def id(self):
+        '''
+            Gets the Host Identification
+        '''
+        return self.__hostname
+
+    @property
+    def mac(self):
+        '''
+
+        :return:
+        '''
+        return copy(self.__mac)
+
+    @property
+    def ipv4(self):
+        '''
+
+        :return:
+        '''
+        return copy(self.__ipv4)
+
+    @property
+    def ipv6(self):
+        '''
+
+        :return:
+        '''
+        return copy(self.__ipv6)
+
+
+class Sector(Entity):
+    def __init__(self, controller_id):
+        assert isinstance(controller_id, UUID), "controller_id is not UUID. Got {:s}".format(
+            repr(controller_id)
+        )
+        self.__controller_id = controller_id
+
+    def __str__(self):
+        return "<Sector type> object at address 0x{:x}: controller_id= {:s};".format(
+            id(self), str(self.__controller_id)
+        )
+
+    def __hash__(self):
+        return hash(self.__controller_id)
+
+    @property
+    def id(self):
+        '''
+            Gets the Sector Identification
+        '''
+        return copy(self.__controller_id)
 
