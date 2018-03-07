@@ -18,6 +18,7 @@ import ryu.app.ofctl.api as ryu_api
 
 from archsdn import central
 from archsdn import database
+from archsdn import engine
 from archsdn.helpers import custom_logging_callback, logger_module_name
 
 # MAC Sword separator definition
@@ -181,8 +182,6 @@ class ArchSDN(RyuApp):
                                 _log.warning(
                                     "Client with ID {:d} was not registered at the Central database".format(client_id)
                                 )
-                            except Exception:
-                                custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
             hosts_network_addresses = central.query_central_network_policies()
             database.update_volatile_information(
@@ -192,6 +191,11 @@ class ArchSDN(RyuApp):
                 ipv6_service=hosts_network_addresses.ipv6_service,
                 mac_service=hosts_network_addresses.mac_service
             )
+            engine.initialise(default_configs)
+
+        except central.ConnectionFailed:
+            _log.error("Cannot connect to Central Manager.")
+            sys.exit(-1)
 
         except Exception as ex:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
@@ -202,10 +206,7 @@ class ArchSDN(RyuApp):
         global _log
 
         try:
-            if ev.enter:
-                _log.info("Switch Connect Event: {}".format(str(ev)))
-            else:
-                _log.info("Switch Disconnect Event: {}".format(str(ev)))
+            engine.process_datapath_event(ev)
 
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
@@ -215,7 +216,7 @@ class ArchSDN(RyuApp):
         global _log
 
         try:
-            _log.info("Packet In Event: {}".format(str(ev)))
+            engine.process_packet_in_event(ev)
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
@@ -224,20 +225,7 @@ class ArchSDN(RyuApp):
         global _log
 
         try:
-            ofp_port_reason = {
-                0: "The port was added",
-                1: "The port was removed",
-                2: "Some attribute of the port has changed"
-            }
-
-            if ev.reason in ofp_port_reason:
-                _log.info(
-                    "Port Status Event at Switch {:d} Port {:d} Reason: {:s}".format(
-                        ev.datapath.id, ev.port_no, ofp_port_reason[ev.reason]
-                    )
-                )
-            else:
-                raise Exception("Reason with value {:d} is unknown to specification.".format(ev.reason))
+            engine.process_port_change_event(ev)
 
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())

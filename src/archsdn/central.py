@@ -1,5 +1,6 @@
 import blosc
 import zmq
+import logging
 from eventlet import sleep
 from eventlet.green import zmq
 from eventlet.semaphore import BoundedSemaphore
@@ -7,18 +8,24 @@ from archsdn import zmq_messages
 from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address
 from archsdn.zmq_messages import loads, dumps
-
+from archsdn.helpers import logger_module_name
 
 __semaphore = None
 __context = None
 __socket = None
+__pool = None
 __location = None
 
 __socket_timeout = 2000  # receive timeout milliseconds
-
+__socket_connect_timeout = 2000  # receive timeout milliseconds
+__socket_retries = 3  # number of retries before fail
+_log = logging.getLogger(logger_module_name(__file__))
 
 # Central communication exceptions
 class CentralException(Exception):
+    pass
+
+class ConnectionFailed(CentralException):
     pass
 
 
@@ -55,41 +62,81 @@ class IPv6InfoAlreadyRegistered(CentralException):
     pass
 
 
+# http://zguide.zeromq.org/php:chapter4
+
 def initialise(central_ip, central_port):
-    global __semaphore, __context, __socket, __location
+    global __semaphore, __context, __socket, __location, __pool
+    _log.info(
+        "Initializing communication to central manager (ip: {:s}; port: {:d})".format(
+            str(central_ip),
+            central_port
+        )
+    )
+
+    __location = "tcp://{:s}:{:d}".format(str(central_ip), central_port)
     __semaphore = BoundedSemaphore()
     __context = zmq.Context()
-    __location = "tcp://{:s}:{:d}".format(str(central_ip), central_port)
+    __pool = zmq.Poller()
     __socket = __context.socket(zmq.REQ)
     __socket.connect(__location)
-    __socket.RCVTIMEO = __socket_timeout  # receive timeout milliseconds
+    __pool.register(__socket, zmq.POLLIN)
+    _log.info("Initializing communication to central manager is complete.")
 
 
 def __make_request(obj):
     global __socket
     assert __semaphore and __context and __location, "communication not initialised"
 
-    if not __socket:
-        __socket = __context.socket(zmq.REQ)
-        __socket.connect(__location)
-        __socket.RCVTIMEO = __socket_timeout  # receive timeout milliseconds
+    obj_byte_seq = blosc.compress(dumps(obj))
+    retries_left = __socket_retries
 
-    retry_attemtps = 3  # magic number - tries three times to reconnect before giving up.
-    while True:
-        try:
-            if retry_attemtps:
-                __socket.send(blosc.compress(dumps(obj)))
-                return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
-            __socket = None
-            raise MakeRequestFailed()
+    while retries_left:
+        __socket.send(obj_byte_seq)
+        events = dict(__pool.poll(__socket_timeout))
 
-        except zmq.ZMQError as ex:
-            retry_attemtps -= 1
-            if ex.errno == zmq.EAGAIN:
-                sleep(seconds=1)
-                __socket = __context.socket(zmq.REQ)
-                __socket.connect(__location)
-                __socket.RCVTIMEO = __socket_timeout  # receive timeout milliseconds
+        if events and events[__socket] == zmq.POLLIN:
+            return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
+
+        else:
+            _log.warning(
+                "No response from central manager, retrying ({:d} out of {:d}) …".format(
+                    __socket_retries - retries_left + 1,
+                    __socket_retries
+                )
+            )
+            __socket.setsockopt(zmq.LINGER, 0)
+            __socket.close()
+            __pool.unregister(__socket)
+            retries_left -= 1
+            if retries_left == 0:
+                _log.error("Central manager seems to be offline. Aborting.")
+                raise ConnectionFailed()
+            _log.warning("Reconnecting and resending...")
+            # Create new connection
+            __socket = __context.socket(zmq.REQ)
+            __socket.connect(__location)
+            __pool.register(__socket, zmq.POLLIN)
+
+
+# retry_attemtps = __socket_retries
+#  while True:
+#      try:
+#          if retry_attemtps:
+#              _log.debug("Sending ")
+#              __socket.send(blosc.compress(dumps(obj)))
+#              return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
+#          __socket = None
+#          raise MakeRequestFailed()
+#
+#      except zmq.ZMQError as ex:
+#          _log.warning(str(ex))
+#          retry_attemtps -= 1
+#          if ex.errno == zmq.EAGAIN:
+#              sleep(seconds=1)
+#              __socket = __context.socket(zmq.REQ)
+#              __socket.setsockopt(zmq.LINGER, 0)
+#              __socket.RCVTIMEO = __socket_timeout  # receive timeout milliseconds
+#              __socket.connect(__location)
 
 
 def query_central_network_policies():

@@ -118,6 +118,7 @@ def parse_arguments():
     parser.add_argument(
         "-ofip", "--ofip",
         help="OpenFlow Service IP ",
+        default='0.0.0.0',
         type=validate_address
     )
     parser.add_argument(

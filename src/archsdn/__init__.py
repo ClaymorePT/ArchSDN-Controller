@@ -55,6 +55,7 @@ def start_controller():
             args.append(str(logging._nameToLevel[parsed_args.logLevel]))
 
         args = args + [
+            '--ofp-listen-host', '{:s}'.format(str(parsed_args.ofip)),
             '--ofp-tcp-listen-port', '{:d}'.format(ofp_port_default),
             '--user-flags', '/'.join((str(pathlib.Path(__file__).parent), "ArchSDN_opts.py")),
         ]
@@ -80,7 +81,7 @@ def start_controller():
         args.append(str(parsed_args.logLevel))
 
         args.append('/'.join((str(pathlib.Path(__file__).parent), "ArchSDN.py")))
-
+        __log.info("Starting Ryu Application with the following arguments: {:s}".format(" ".join(args)))
         __process = subprocess.Popen(
             args,
             stdout=sys.stdout,
