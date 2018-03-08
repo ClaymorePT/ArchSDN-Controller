@@ -35,5 +35,22 @@ class SwitchException(EntityException):
 class PortAlreadyRegistered(SwitchException):
     pass
 
+
 class PortNotRegistered(SwitchException):
     pass
+
+
+class LinkException(SectorException):
+    def __init__(self, reason):
+        self.__reason = reason
+
+    def __str__(self):
+        return self.__reason
+
+
+class SwitchPortAlreadyConnected(LinkException):
+    def __init__(self, port_no):
+        self.__port_no = port_no
+
+    def __str__(self):
+        return "Switch port {:d} already used.".format(self.__port_no)

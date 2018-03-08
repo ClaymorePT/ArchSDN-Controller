@@ -151,11 +151,73 @@ class EntitiesManagement(unittest.TestCase):
             with self.subTest(entity=entity):
                 sector.register_entity(entity)
                 self.assertTrue(sector.is_entity_registered(entity.id))
-                sector.remove_entity(entity)
+                sector.remove_entity(entity.id)
 
                 with self.assertRaises(exceptions.EntityNotRegistered):
-                    sector.remove_entity(entity)
+                    sector.remove_entity(entity.id)
 
 
+class ConnectEntities(unittest.TestCase):
+    def setUp(self):
+        sector.initialise()
 
+        self.switch_1 = entities.Switch(
+            id=1,
+            control_ip=IPv4Address('192.168.123.1'),
+            control_port=6631,
+            of_version=ofproto_v1_3.OFP_VERSION
+        )
+        self.switch_1.register_port(
+            port_no=1,
+            hw_addr=EUI('e0:d4:e8:6b:4d:f8'),
+            name=b'eth0'.decode('ascii'),
+            config=entities.Switch.PORT_CONFIG(0),
+            state=entities.Switch.PORT_STATE(4),
+            curr=entities.Switch.PORT_FEATURES(2056),
+            advertised=entities.Switch.PORT_FEATURES(0),
+            supported=entities.Switch.PORT_FEATURES(0),
+            peer=entities.Switch.PORT_FEATURES(0),
+            curr_speed=0,
+            max_speed=100
+        )
+        self.switch_2 = entities.Switch(
+            id=2,
+            control_ip=IPv4Address('192.168.123.2'),
+            control_port=6631,
+            of_version=ofproto_v1_3.OFP_VERSION
+        )
+        self.switch_2.register_port(
+            port_no=1,
+            hw_addr=EUI('e0:d4:e8:6b:4d:f8'),
+            name=b'eth0'.decode('ascii'),
+            config=entities.Switch.PORT_CONFIG(0),
+            state=entities.Switch.PORT_STATE(4),
+            curr=entities.Switch.PORT_FEATURES(2056),
+            advertised=entities.Switch.PORT_FEATURES(0),
+            supported=entities.Switch.PORT_FEATURES(0),
+            peer=entities.Switch.PORT_FEATURES(0),
+            curr_speed=0,
+            max_speed=100
+        )
+        self.host = entities.Host(
+            hostname='host_1',
+            mac=EUI('11:22:33:44:55:66'),
+            ipv4=IPv4Address('10.0.0.1'),
+            ipv6=IPv6Address('fd61:7263:6873:646e::1')
+        )
+        self.sector = entities.Sector(
+            controller_id=UUID(int=1)
+        )
+        sector.register_entity(self.switch_1)
+        sector.register_entity(self.switch_2)
+        sector.register_entity(self.host)
+        sector.register_entity(self.sector)
 
+    def test_connect_host_to_switch(self):
+        sector.connect_entities(self.switch_1.id, self.host.id, switch_port_no=1)
+
+    def test_connect_switch_to_switch(self):
+        sector.connect_entities(self.switch_1.id, self.switch_2.id, switch_a_port_no=1, switch_b_port_no=1)
+
+    def test_connect_switch_to_sector(self):
+        sector.connect_entities(self.switch_1.id, self.sector.id, switch_port_no=1)

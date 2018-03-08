@@ -28,6 +28,7 @@ class Entity(ABC):
         pass
 
 
+
 class Switch(Entity):
     class PORT_CONFIG(IntFlag):
         OFPPC_PORT_DOWN = 1 << 0
@@ -243,3 +244,5 @@ class Sector(Entity):
         if mac not in self.__ports:
             raise PortNotRegistered()
         self.__ports.remove(mac)
+
+
