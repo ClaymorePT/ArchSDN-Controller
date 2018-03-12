@@ -1,5 +1,4 @@
 import blosc
-import zmq
 import logging
 from eventlet import sleep
 from eventlet.green import zmq

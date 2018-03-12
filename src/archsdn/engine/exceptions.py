@@ -48,6 +48,10 @@ class LinkException(SectorException):
         return self.__reason
 
 
+class PortNotUsed(SectorException):
+    pass
+
+
 class SwitchPortAlreadyConnected(LinkException):
     def __init__(self, port_no):
         self.__port_no = port_no

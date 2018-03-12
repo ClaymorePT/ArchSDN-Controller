@@ -9,7 +9,7 @@ from archsdn.engine.entities import \
 
 from archsdn.engine.exceptions import \
     EntityAlreadyRegistered, EntityNotRegistered, \
-    LinkException, SwitchPortAlreadyConnected
+    LinkException, SwitchPortAlreadyConnected, PortNotUsed, PortNotRegistered
 
 __log = logging.getLogger(logger_module_name(__file__))
 
@@ -227,9 +227,54 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
             )
 
 
+def query_connected_entity_id(switch_id, port_id):
+    '''
+
+    :param switch_id: Switch entity ID
+    :param port_id: Switch Port
+    :return:
+    '''
+    assert __sector_initialized, "sector not initialised"
+    assert isinstance(port_id, int), \
+        "switch_a_port_no type expected to be int. Got {:s}".format(type(port_id).__name__)
+
+    with __lock:
+        switch = query_entity(switch_id)
+
+        if port_id not in switch.ports:
+            ValueError(
+                "switch {:d} is is not valid for switch {:016X}.".format(
+                    port_id, switch_id
+                )
+            )
+        for entity_id in __net[switch_id]:
+            if port_id in __net[switch_id][entity_id]:
+                return entity_id
+
+        raise PortNotUsed()
 
 
+def is_port_connected(switch_id, port_id):
+    '''
 
+    :param switch_id: Switch entity ID
+    :param port_id: Switch Port
+    :return:
+    '''
+    assert __sector_initialized, "sector not initialised"
+    assert isinstance(port_id, int), \
+        "switch_a_port_no type expected to be int. Got {:s}".format(type(port_id).__name__)
 
+    with __lock:
+        switch = query_entity(switch_id)
+
+        if port_id not in switch.ports:
+            raise PortNotRegistered()
+
+        for entity_id in __net[switch_id]:
+            if port_id in __net[switch_id][entity_id]:
+                return True
+
+        return False
 
 
