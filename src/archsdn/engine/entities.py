@@ -28,17 +28,16 @@ class Entity(ABC):
         pass
 
 
-
 class Switch(Entity):
     class PORT_CONFIG(IntFlag):
         OFPPC_PORT_DOWN = 1 << 0
-        OFPPC_NO_RECV  = 1 << 2
+        OFPPC_NO_RECV = 1 << 2
         OFPPC_NO_FWD = 1 << 5
-        OFPPC_NO_PACKET_IN  = 1 << 6
+        OFPPC_NO_PACKET_IN = 1 << 6
 
     class PORT_STATE(IntFlag):
         OFPPS_LINK_DOWN = 1 << 0
-        OFPPS_BLOCKED  = 1 << 1
+        OFPPS_BLOCKED = 1 << 1
         OFPPS_LIVE = 1 << 2
 
     class PORT_FEATURES(IntFlag):

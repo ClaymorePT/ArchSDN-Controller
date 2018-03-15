@@ -4,7 +4,7 @@ from contextlib import closing
 from ipaddress import IPv4Address, IPv6Address
 from sqlite3 import IntegrityError
 from .shared_data import GetConnector
-from .exceptions import Datapath_Not_Registered, Datapath_Already_Registered
+from .exceptions import DatapathNotRegistered, DatapathAlreadyRegistered
 from .data_validation import is_ipv4_port_tuple, is_ipv6_port_tuple
 
 _log = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ def query_info(datapath_id):
                                     "datapaths_view WHERE datapaths_view.datapath_id == ?", (datapath_id,))
             res = db_cursor.fetchone()
             if res is None:
-                raise Datapath_Not_Registered()
+                raise DatapathNotRegistered()
 
             datapath_info = {"ipv4": IPv4Address(res[0]) if res[0] else None,
                     "ipv4_port": res[1],
@@ -72,7 +72,7 @@ def register(datapath_id, ipv4_info=None, ipv6_info=None):
         _log.error(str(ex))
         assert not GetConnector().in_transaction, "database with active transaction"
         if "UNIQUE constraint failed" in str(ex):
-            raise Datapath_Already_Registered()
+            raise DatapathAlreadyRegistered()
         raise ex
 
 
@@ -87,7 +87,7 @@ def remove(datapath_id):
             db_cursor.execute("DELETE FROM datapaths WHERE datapaths.id == ?", (datapath_id,))
             if db_cursor.rowcount == 0:
                 _log.debug("Cannot remove Datapath {:d}: Not Registered".format(datapath_id))
-                raise Datapath_Not_Registered()
+                raise DatapathNotRegistered()
 
             database_connector.commit()
             assert not GetConnector().in_transaction, "database with active transaction"

@@ -20,9 +20,11 @@ __socket_connect_timeout = 2000  # receive timeout milliseconds
 __socket_retries = 3  # number of retries before fail
 _log = logging.getLogger(logger_module_name(__file__))
 
+
 # Central communication exceptions
 class CentralException(Exception):
     pass
+
 
 class ConnectionFailed(CentralException):
     pass
@@ -60,8 +62,6 @@ class IPv4InfoAlreadyRegistered(CentralException):
 class IPv6InfoAlreadyRegistered(CentralException):
     pass
 
-
-# http://zguide.zeromq.org/php:chapter4
 
 def initialise(central_ip, central_port):
     global __semaphore, __context, __socket, __location, __pool
@@ -115,27 +115,6 @@ def __make_request(obj):
             __socket = __context.socket(zmq.REQ)
             __socket.connect(__location)
             __pool.register(__socket, zmq.POLLIN)
-
-
-# retry_attemtps = __socket_retries
-#  while True:
-#      try:
-#          if retry_attemtps:
-#              _log.debug("Sending ")
-#              __socket.send(blosc.compress(dumps(obj)))
-#              return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
-#          __socket = None
-#          raise MakeRequestFailed()
-#
-#      except zmq.ZMQError as ex:
-#          _log.warning(str(ex))
-#          retry_attemtps -= 1
-#          if ex.errno == zmq.EAGAIN:
-#              sleep(seconds=1)
-#              __socket = __context.socket(zmq.REQ)
-#              __socket.setsockopt(zmq.LINGER, 0)
-#              __socket.RCVTIMEO = __socket_timeout  # receive timeout milliseconds
-#              __socket.connect(__location)
 
 
 def query_central_network_policies():
@@ -328,3 +307,25 @@ def query_client_info(controller_uuid, client_id):
 
         raise UnexpectedResponse(answer)
 
+
+def remove_client(controller_uuid, client_id):
+    assert __semaphore and __context and __socket and __location, "communication not initialised"
+    assert isinstance(controller_uuid, UUID), \
+        "controller_uuid is not an UUID instance: type {}".format(type(controller_uuid))
+    assert isinstance(client_id, int), "host_local_id is not int"
+    assert client_id >= 0, "client_id is cannot be negative"
+
+    with __semaphore:
+        msg = zmq_messages.REQRemoveControllerClient(
+            controller_uuid, client_id
+        )
+
+        answer = __make_request(msg)
+
+        if isinstance(answer, zmq_messages.RPLSuccess):
+            return
+        if isinstance(answer, zmq_messages.RPLClientNotRegistered):
+            raise ClientNotRegistered()
+        if isinstance(answer, zmq_messages.RPLControllerNotRegistered):
+            raise ControllerNotRegistered()
+        raise UnexpectedResponse(answer)

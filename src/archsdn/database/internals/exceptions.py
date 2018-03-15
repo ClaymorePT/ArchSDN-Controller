@@ -1,21 +1,21 @@
 
-class Client_Not_Registered (Exception):
+class ClientNotRegistered (Exception):
     pass
 
-class Client_Already_Registered (Exception):
+class ClientAlreadyRegistered (Exception):
     pass
 
-class Datapath_Not_Registered (Exception):
+class DatapathNotRegistered (Exception):
     pass
 
-class Datapath_Already_Registered (Exception):
+class DatapathAlreadyRegistered (Exception):
     pass
 
-class Flow_Already_Registered(Exception):
+class FlowAlreadyRegistered(Exception):
     pass
 
-class Flow_Not_Registered(Exception):
+class FlowNotRegistered(Exception):
     pass
 
-class Address_Not_Registered(Exception):
+class AddressNotRegistered(Exception):
     pass

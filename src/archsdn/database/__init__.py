@@ -64,13 +64,13 @@ from archsdn.database.internals.clients import remove as __remove_client
 from archsdn.database.internals.clients import update_addresses as __update_client_addresses
 
 from archsdn.database.internals.exceptions import \
-    Client_Not_Registered as __Client_Not_Registered, \
-    Client_Already_Registered as __Client_Already_Registered, \
-    Datapath_Not_Registered as __Datapath_Not_Registered, \
-    Datapath_Already_Registered as __Datapath_Already_Registered, \
-    Flow_Already_Registered as __Flow_Already_Registered, \
-    Flow_Not_Registered as __Flow_Not_Registered, \
-    Address_Not_Registered as __Address_Not_Registered
+    ClientNotRegistered as __ClientNotRegistered, \
+    ClientAlreadyRegistered as __ClientAlreadyRegistered, \
+    DatapathNotRegistered as __DatapathNotRegistered, \
+    DatapathAlreadyRegistered as __DatapathAlreadyRegistered, \
+    FlowAlreadyRegistered as __FlowAlreadyRegistered, \
+    FlowNotRegistered as __FlowNotRegistered, \
+    AddressNotRegistered as __AddressNotRegistered
 
 from archsdn.database.volatile_data import \
     query_volatile_info as __query_volatile_info, \
@@ -102,13 +102,13 @@ _callbacks = {
 }
 
 _exceptions = {
-    "ClientNotRegistered": __Client_Not_Registered,
-    "ClientAlreadyRegistered": __Client_Already_Registered,
-    "DatapathNotRegistered": __Datapath_Not_Registered,
-    "DatapathAlreadyRegistered": __Datapath_Already_Registered,
-    "Flow_AlreadyRegistered": __Flow_Already_Registered,
-    "FlowNotRegistered": __Flow_Not_Registered,
-    "AddressNotRegistered": __Address_Not_Registered,
+    "ClientNotRegistered": __ClientNotRegistered,
+    "ClientAlreadyRegistered": __ClientAlreadyRegistered,
+    "DatapathNotRegistered": __DatapathNotRegistered,
+    "DatapathAlreadyRegistered": __DatapathAlreadyRegistered,
+    "Flow_AlreadyRegistered": __FlowAlreadyRegistered,
+    "FlowNotRegistered": __FlowNotRegistered,
+    "AddressNotRegistered": __AddressNotRegistered,
 }
 
 _log = logging.getLogger(logger_module_name(__file__))

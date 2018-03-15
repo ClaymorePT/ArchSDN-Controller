@@ -2,10 +2,16 @@ import logging
 from ipaddress import ip_address
 import sys
 import struct
-from functools import partial
+import time
+from uuid import UUID
+from ctypes import c_uint64, c_int64
 
-from scapy.layers.l2 import Ether
-from scapy.packet import Raw
+from scapy.packet import Padding, Raw
+from scapy.layers.l2 import Ether, ARP, ETHER_TYPES, IP_PROTOS
+from scapy.layers.inet import IP, UDP, ICMP
+from scapy.layers.dhcp import BOOTP, DHCP
+from scapy.layers.dns import DNSRR, DNS, DNSQR
+
 from ryu.lib import hub
 from netaddr import EUI
 
@@ -14,18 +20,20 @@ from archsdn import database
 from archsdn import central
 from archsdn.engine import sector
 from archsdn.engine import entities
+from archsdn.engine import exceptions
 
 
 _log = logging.getLogger(logger_module_name(__file__))
 __default_configs = None
-__implemented_flows = {}  # __implemented_flows[datapath_id][cookie_id] = [FlowMod]
+__implemented_flows = {}  # __implemented_flows[datapath_id][port_id] = [FlowMod]
 __datapath_beacons = {}  # __datapath_beacons[datapath_id] = Beacon_Task
 
 __recycled_cookie_ids = []
 __cookie_id_counter = 0
+__beacons_hash_table = {}  # __beacons_hash_table[hash] = (datapath_id, port_out)
 
 
-def __alloc_cookieID():
+def __alloc_cookie_id():
     global __cookie_id_counter
 
     if __cookie_id_counter == 0xFFFFFFFFFFFFFFFF:
@@ -35,7 +43,8 @@ def __alloc_cookieID():
     __cookie_id_counter = __cookie_id_counter + 1
     return __cookie_id_counter
 
-def __free_cookieID(cookie_id):
+
+def __free_cookie_id(cookie_id):
     global __cookie_id_counter
     if cookie_id <= 0:
         raise ValueError("Cookies cannot be zero or negative.")
@@ -52,8 +61,6 @@ def __free_cookieID(cookie_id):
             __cookie_id_counter = __cookie_id_counter - 1
         else:
             break
-
-
 
 
 def __send_msg(*args, **kwargs):
@@ -109,6 +116,8 @@ def process_datapath_event(dp_event):
         assert ipv4_info or ipv6_info, 'ipv4_info and ipv6_info are None at the same time'
 
         def __send_discovery_beacon():
+            global __beacons_hash_table
+
             try:
                 ports = datapath_obj.ports
                 _log.info("Starting beacon for Switch {:016X}".format(datapath_id))
@@ -128,16 +137,25 @@ def process_datapath_event(dp_event):
                                         not sector.is_port_connected(datapath_id, port_no)
                                     )
                                 ):
+
+                            hash_val = c_uint64(hash((datapath_id, port_no))).value
+                            __beacons_hash_table[hash_val] = (datapath_id, port_no)
                             beacon = Ether(
                                 src=str(central_policies_addresses['mac_service']),
                                 dst="FF:FF:FF:FF:FF:FF",
                                 type=0xAAAA
                             ) / Raw(
-                                load=struct.pack("!H16sQH", 1, controller_uuid.bytes, datapath_id, port_no)
+                                load=struct.pack(
+                                    "!H16s8s",
+                                    1, controller_uuid.bytes,
+                                    hash_val.to_bytes(8, byteorder='big')
+                                )
                             )
 
                             _log.debug(
-                                "Sending beacon through port {:d} of switch {:016X}".format(port_no, datapath_id)
+                                "Sending beacon through port {:d} of switch {:016X} with hash value {:X}".format(
+                                    port_no, datapath_id, hash_val
+                                )
                             )
 
                             datapath_obj.send_msg(
@@ -150,6 +168,12 @@ def process_datapath_event(dp_event):
                                 )
                             )
                     hub.sleep(3)
+
+                hash_vals = filter(
+                    (lambda val: __beacons_hash_table[val][0] == datapath_id), __beacons_hash_table.keys()
+                )
+                for val in hash_vals:
+                    del __beacons_hash_table[val]
 
                 _log.warning("Switch {:016X} is no longer active. Beacon manager is terminating.".format(datapath_id))
 
@@ -259,7 +283,7 @@ def process_datapath_event(dp_event):
                 inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
                 boot_dhcp = ofp_parser.OFPFlowMod(
                     datapath=datapath_obj,
-                    cookie=__alloc_cookieID(),
+                    cookie=__alloc_cookie_id(),
                     cookie_mask=0,
                     table_id=0,
                     command=ofp.OFPFC_ADD,
@@ -284,7 +308,7 @@ def process_datapath_event(dp_event):
 
                 archsdn_beacon = ofp_parser.OFPFlowMod(
                     datapath=datapath_obj,
-                    cookie=__alloc_cookieID(),
+                    cookie=__alloc_cookie_id(),
                     cookie_mask=0,
                     table_id=0,
                     command=ofp.OFPFC_ADD,
@@ -333,7 +357,7 @@ def process_datapath_event(dp_event):
             database.remove_datapath(datapath_id)
             for port_no in __implemented_flows[datapath_id]:
                 for flow in __implemented_flows[datapath_id][port_no]:
-                    __free_cookieID(flow.cookie)
+                    __free_cookie_id(flow.cookie)
             del __implemented_flows[datapath_id]
 
             _log.info("Switch Disconnect Event: {:s}".format(str(dp_event.__dict__)))
@@ -387,546 +411,689 @@ def process_port_change_event(port_change_event):
     # {'datapath': <ryu.controller.controller.Datapath object at 0x7fb5da0fe2e8>, 'reason': 2, 'port_no': 1}
 
     _log.info("Port Change Event: {}".format(str(port_change_event.__dict__)))
-
-
     ofp_port_reason = {
         0: "The port was added",
         1: "The port was removed",
         2: "Some attribute of the port has changed"
     }
+    datapath_obj = port_change_event.datapath
+    datapath_id = port_change_event.datapath.id
+    port_no = port_change_event.port_no
+    reason_num = port_change_event.reason
+    switch = sector.query_entity(datapath_id)
 
-    if port_change_event.reason in ofp_port_reason:
+    if reason_num in ofp_port_reason:
         _log.info(
             "Port Status Event at Switch {:016X} Port {:d} Reason: {:s}".format(
-                port_change_event.datapath.id,
-                port_change_event.port_no,
-                ofp_port_reason[port_change_event.reason]
+                datapath_id,
+                port_no,
+                ofp_port_reason[reason_num]
             )
         )
+
+        if reason_num == 0:
+            port = datapath_obj.ports[port_no]
+            switch.register_port(
+                port_no=port.port_no,
+                hw_addr=EUI(port.hw_addr),
+                name=port.name.decode('ascii'),
+                config=entities.Switch.PORT_CONFIG(port.config),
+                state=entities.Switch.PORT_STATE(port.state),
+                curr=entities.Switch.PORT_FEATURES(port.curr),
+                advertised=entities.Switch.PORT_FEATURES(port.advertised),
+                supported=entities.Switch.PORT_FEATURES(port.supported),
+                peer=entities.Switch.PORT_FEATURES(port.peer),
+                curr_speed=port.curr_speed,
+                max_speed=port.max_speed
+            )
+
+        elif reason_num == 1:
+            if port_no in switch.ports:
+                switch.remove_port(port_no)
+            else:
+                _log.warning(
+                    "Port {:d} not previously registered at Switch {:016X}.".format(
+                        port_no, datapath_id
+                    )
+                )
+
+        else:
+            port = datapath_obj.ports[port_no]
+
+            old_config = switch.ports[port_no]['config']
+            new_config = entities.Switch.PORT_CONFIG(port.config)
+            if old_config != new_config:
+                _log.warning(
+                    "Port {:d} config at Switch {:016X} changed from {:s} to {:s}".format(
+                        port_no, datapath_id, str(old_config), str(new_config)
+                    )
+                )
+                switch.ports[port_no]['config'] = new_config
+
+            old_state = switch.ports[port_no]['state']
+            new_state = entities.Switch.PORT_STATE(port.state)
+            if old_state != new_state:
+                if entities.Switch.PORT_STATE.OFPPS_LINK_DOWN in new_state:
+                    # Port is down. Detect which scenarios are affected, take them down,
+                    #   send advertisements if necessary and try to rebuild the scenarios
+                    pass
+                _log.warning(
+                    "Port {:d} state at Switch {:016X} changed from {:s} to {:s}".format(
+                        port_no, datapath_id, str(old_state), str(new_state)
+                    )
+                )
+                switch.ports[port_no]['state'] = new_state
+
     else:
-        raise Exception("Reason with value {:d} is unknown to specification.".format(port_change_event.reason))
+        raise Exception("Reason with value {:d} is unknown to specification.".format(reason_num))
 
 
 def process_packet_in_event(packet_in_event):
     assert __default_configs, "engine not initialised"
 
+    #_log.info("Packet In Event: {}".format(str(packet_in_event.__dict__)))
+
+    msg = packet_in_event.msg
+    datapath_obj = msg.datapath
+    datapath_id = datapath_obj.id
+    ofp_parser = datapath_obj.ofproto_parser
+    ofp = datapath_obj.ofproto
+    controller_uuid = database.get_database_info()["uuid"]
+    central_policies_addresses = database.query_volatile_info()
+    ipv4_network = central_policies_addresses["ipv4_network"]
+    ipv4_service = central_policies_addresses["ipv4_service"]
+    mac_service = central_policies_addresses["mac_service"]
+
     # Identify and characterise packet (deep packet inspection to detect service or request)
     # Identify origin (in_port, mac source, IP source)
+    # {
+    #     'timestamp': 1520870994.4223557,
+    #     'msg': OFPPacketIn(
+    #         buffer_id=4294967295,
+    #         cookie=2,
+    #         data=b'\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
+    #         match=OFPMatch(
+    #             oxm_fields={'in_port': 1}
+    #         ),
+    #         reason=1,
+    #         table_id=0,
+    #         total_len=60
+    #     )
+    # }
+    #
+    # {
+    #   'datapath': <ryu.controller.controller.Datapath object at 0x7fdb134b1b00>,
+    #   'version': 4,
+    #   'msg_type': 10,
+    #   'msg_len': 102,
+    #   'xid': 0,
+    #   'buf': b'\x04\n\x00f\x00\x00\x00\x00\xff\xff\xff\xff\x00<\x01\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x01\x00\x0c\x80\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'buffer_id': 4294967295, 'total_len': 60, 'reason': 1, 'table_id': 0, 'cookie': 4, 'match': OFPMatch(oxm_fields={'in_port': 1}), 'data': b'\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    # }
+
+    in_port = None
+    #in_port_mac = None
+
+    if msg.match:
+        for match_field in msg.match.fields:
+            if type(match_field) is ofp_parser.MTInPort:
+                in_port = match_field.value
+                #in_port_mac = msg.datapath.ports[in_port].hw_addr
+
+    pkt = Ether(msg.data)
+    pkt_src_mac = EUI(pkt.src)
+    pkt_dst_mac = EUI(pkt.dst)
+    pkt_ethertype = pkt.type
+    _log.debug(
+        "Packet-In received at controller by switch {:016X} at port {:d} "
+        "and sent by host {:s} to {:s} with type 0x{:04x}".format(
+            datapath_id, in_port, str(pkt_src_mac), str(pkt_dst_mac), pkt_ethertype
+        )
+    )
+
+    layer_num = 0
+    if pkt_ethertype == 0xAAAA:  ###  ArchSDN Hello Packet : Ether Type -> 0xAAAA
+        layer_num += 1
+        archsdn_layer = memoryview(pkt.getlayer(layer_num).fields['load'])
+        if len(archsdn_layer) < 2:
+            _log.warning(
+                "ArchSDN Beacon Ignored. Payload length is lower than 2. Got {:d}".format(len(archsdn_layer))
+            )
+            return
+
+        (msg_type,) = struct.unpack("!H", archsdn_layer[0:struct.calcsize("!H")])
+        msg_payload = archsdn_layer[2:]
+
+        if msg_type == 1:
+            msg_type_1_payload_format = "!16s8s"
+            msg_type_1_payload_len = struct.calcsize(msg_type_1_payload_format)
+            if len(msg_payload) < msg_type_1_payload_len:
+                _log.warning(
+                    "ArchSDN Beacon Ignored. It has invalid size: it's {:d} when it should be at least {:d}".format(
+                        len(msg_payload), msg_type_1_payload_len
+                    )
+                )
+                return
+
+            (sender_controller_uuid_bytes, hash_val_bytes) = struct.unpack(
+                msg_type_1_payload_format, msg_payload[0:msg_type_1_payload_len]
+            )
+
+            hash_val = int.from_bytes(hash_val_bytes, byteorder='big', signed=False)
+            sender_controller_uuid = UUID(bytes=sender_controller_uuid_bytes)
+
+            if controller_uuid != sender_controller_uuid:
+                _log.debug(
+                    "Switch {:016X} received Beacon Packet from a Controller with ID {:s}, with the hash value {:X}"
+                    "".format(
+                        datapath_id, str(sender_controller_uuid), hash_val
+                    )
+                )
+                if not sector.is_entity_registered(sender_controller_uuid):
+                    sector.register_entity(
+                        entities.Sector(
+                            controller_id=sender_controller_uuid
+                        )
+                    )
+                if not sector.is_port_connected(datapath_id, in_port):
+                    sector.connect_entities(
+                        datapath_id, sender_controller_uuid,
+                        switch_port_no=in_port
+                    )
+
+            else:
+                (sender_datapath_id, sender_port_out) = __beacons_hash_table[hash_val]
+                _log.debug(
+                    "Switch {:016X} received Beacon Packet sent by this very own controller with the hash value "
+                    "{:X}".format(
+                        datapath_id, hash_val
+                    )
+                )
+
+                if not sector.is_port_connected(datapath_id, in_port):
+                    sector.connect_entities(
+                        datapath_id, sender_datapath_id,
+                        switch_a_port_no=in_port,
+                        switch_b_port_no=sender_port_out
+                    )
+                    entity = sector.query_entity(sender_datapath_id)
+                    assert isinstance(entity, entities.Switch), "entity is suposed to be a Switch. Got {:s}".format(
+                        repr(entity)
+                    )
+
+        else:
+            _log.warning(
+                "Ignoring ArchSDN Message received at switch {:016X} (Unknown type: {:d})".format(
+                    datapath_id, msg_type
+                )
+            )
+
+    elif pkt.haslayer(DHCP):  # https://tools.ietf.org/rfc/rfc2132.txt
+        layer_num += 1
+        ipv4_layer = pkt[IP]
+        bootp_layer = pkt[BOOTP]
+        dhcp_layer = pkt[DHCP]
+
+        dhcp_layer_options = dict(filter((lambda x: len(x) == 2), dhcp_layer.options))
+        if 'message-type' in dhcp_layer_options:
+            if dhcp_layer_options['message-type'] is 1:  # A DHCP DISCOVER packet was received
+
+                _log.debug(
+                    "Received DHCP Discover packet from host with MAC {:s} on switch {:016X} at port {:d}".format(
+                        pkt.src, datapath_id, in_port
+                    )
+                )
+
+                try:  # search for a registration for the host at the local database
+                    host_database_id = database.query_client_id(
+                        datapath_id=datapath_id,
+                        port_id=in_port,
+                        mac=pkt_src_mac
+                    )
+
+                except database.ClientNotRegistered:  # If not found, register a new host
+                    database.register_client(
+                        datapath_id=datapath_id,
+                        port_id=in_port,
+                        mac=pkt_src_mac
+                    )
+                    host_database_id = database.query_client_id(
+                        datapath_id=datapath_id,
+                        port_id=in_port,
+                        mac=pkt_src_mac
+                    )
+                    try:  # Query central manager for the centralized host information
+                        central_client_info = central.query_client_info(controller_uuid, host_database_id)
+
+                    except central.ClientNotRegistered:
+                        central.register_client(
+                            controller_uuid=controller_uuid,
+                            client_id=host_database_id
+                        )
+                        central_client_info = central.query_client_info(controller_uuid, host_database_id)
+
+                    host_name = central_client_info.name
+                    host_ipv4 = central_client_info.ipv4
+                    host_ipv6 = central_client_info.ipv6
+                    database.update_client_addresses(
+                        client_id=host_database_id,
+                        ipv4=host_ipv4,
+                        ipv6=host_ipv6
+                    )
+
+                    if sector.is_port_connected(switch_id=datapath_id, port_id=in_port):
+                        old_entity_id = sector.query_connected_entity_id(switch_id=datapath_id, port_id=in_port)
+                        old_entity = sector.query_entity(old_entity_id)
+
+                        assert isinstance(old_entity, entities.Host), "entity expected to be Host. Got {:s}".format(
+                            repr(old_entity)
+                        )
+                        if old_entity.mac != pkt_src_mac:
+                            sector.disconnect_entities(datapath_id, old_entity_id, in_port)
+                            new_host = entities.Host(
+                                hostname=host_name,
+                                mac=pkt_src_mac,
+                                ipv4=host_ipv4,
+                                ipv6=host_ipv6
+                            )
+                            sector.register_entity(new_host)
+                            sector.connect_entities(datapath_id, new_host.id, switch_port_no=in_port)
+
+                # It is necessary to check if the host is already registered at the controller database
+                client_info = database.query_client_info(host_database_id)
+
+                # A DHCP Offer packet is tailored specifically for the new host.
+                dhcp_offer = Ether(src=str(mac_service), dst=pkt.src) \
+                    / IP(src=str(ipv4_service), dst="255.255.255.255") \
+                    / UDP() \
+                    / BOOTP(
+                        op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags,
+                        sname=str(controller_uuid), yiaddr=str(client_info["ipv4"]), chaddr=bootp_layer.chaddr
+                    ) \
+                    / DHCP(
+                        options=[
+                            ("message-type", "offer"),
+                            ("server_id", str(ipv4_service)),
+                            ("lease_time", 43200),
+                            ("subnet_mask", str(ipv4_network.netmask)),
+                            ("router", str(ipv4_service)),
+                            ("hostname", "{:d}".format(host_database_id).encode("ascii")),
+                            ("name_server", str(ipv4_service)),
+                            ("name_server", "8.8.8.8"),
+                            ("domain", "archsdn".encode("ascii")),
+                            ("renewal_time", 21600),
+                            ("rebinding_time", 37800),
+                            "end"
+                        ]
+                    )
+
+                pad = Padding(load=" "*(300-len(dhcp_offer)))
+                dhcp_offer = dhcp_offer / pad
+
+                # The controller sends the DHCP Offer packet to the host.
+                datapath_obj.send_msg(
+                    ofp_parser.OFPPacketOut(
+                        datapath=msg.datapath,
+                        buffer_id=ofp.OFP_NO_BUFFER,
+                        in_port=in_port,
+                        actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_offer))],
+                        data=bytes(dhcp_offer)
+                    )
+                )
+                __send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+
+            elif dhcp_layer_options['message-type'] is 3:  # A DHCP Request packet was received
+                try:
+                    _log.debug(
+                        "Received DHCP Request packet from host with MAC {:s} on switch {:016X} at port {:d}".format(
+                            pkt.src, datapath_id, in_port
+                        )
+                    )
+
+                    # It is necessary to check if the host is already registered at the controller database
+                    client_id = database.query_client_id(datapath_id, in_port, EUI(pkt.src))
+                    client_info = database.query_client_info(client_id)
+                    client_ipv4 = client_info["ipv4"]
+
+                    # Activate a flow to redirect to the controller ARP Request packets sent from the host to the
+                    #   controller, from in_port.
+                    match = ofp_parser.OFPMatch(
+                        in_port=in_port, eth_dst='ff:ff:ff:ff:ff:ff', eth_src=pkt.src, eth_type=0x0806,
+                        arp_op=1, arp_spa=str(client_ipv4), arp_tpa=(str(ipv4_service), 0xFFFFFFFF),
+                        arp_sha=pkt.src, arp_tha='00:00:00:00:00:00'
+                    )
+                    actions = [ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
+
+                    msg = ofp_parser.OFPFlowMod(
+                        datapath=msg.datapath,
+                        cookie=__alloc_cookie_id(),
+                        cookie_mask=0,
+                        table_id=0,
+                        command=ofp.OFPFC_ADD,
+                        idle_timeout=0,
+                        hard_timeout=0,
+                        priority=ofp.OFP_DEFAULT_PRIORITY,
+                        buffer_id=ofp.OFP_NO_BUFFER,
+                        out_port=ofp.OFPP_ANY,
+                        out_group=ofp.OFPG_ANY,
+                        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+                        match=match,
+                        instructions=inst
+                    )
+                    datapath_obj.send_msg(msg)
+                    __implemented_flows[datapath_id][in_port].append(msg)
+
+                    # Activate a flow to redirect to the controller ICMP Request packets sent from the host to the
+                    #   controller, from in_port.
+                    match = ofp_parser.OFPMatch(
+                        in_port=in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ETHER_TYPES["IPv4"],
+                        ip_proto=1, icmpv4_type=8, icmpv4_code=0
+                    )
+                    actions = [ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
+                    msg = ofp_parser.OFPFlowMod(
+                        datapath=msg.datapath,
+                        cookie=__alloc_cookie_id(),
+                        cookie_mask=0,
+                        table_id=0,
+                        command=ofp.OFPFC_ADD,
+                        idle_timeout=0,
+                        hard_timeout=0,
+                        priority=ofp.OFP_DEFAULT_PRIORITY,
+                        buffer_id=ofp.OFP_NO_BUFFER,
+                        out_port=ofp.OFPP_ANY,
+                        out_group=ofp.OFPG_ANY,
+                        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+                        match=match,
+                        instructions=inst
+                    )
+                    datapath_obj.send_msg(msg)
+                    __implemented_flows[datapath_id][in_port].append(msg)
+
+                    # Activate a flow to redirect to the controller DNS packets sent from the host to the
+                    #   controller, from in_port.
+                    match = ofp_parser.OFPMatch(
+                        in_port=in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ETHER_TYPES["IPv4"],
+                        ipv4_src=str(client_ipv4), ipv4_dst=str(ipv4_service), ip_proto=17, udp_dst=53
+                    )
+                    actions = [ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
+                    msg = ofp_parser.OFPFlowMod(
+                        datapath=msg.datapath,
+                        cookie=0,
+                        cookie_mask=0,
+                        table_id=0,
+                        command=ofp.OFPFC_ADD,
+                        idle_timeout=0,
+                        hard_timeout=0,
+                        priority=ofp.OFP_DEFAULT_PRIORITY,
+                        buffer_id=ofp.OFP_NO_BUFFER,
+                        out_port=ofp.OFPP_ANY,
+                        out_group=ofp.OFPG_ANY,
+                        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+                        match=match,
+                        instructions=inst
+                    )
+                    datapath_obj.send_msg(msg)
+                    __implemented_flows[datapath_id][in_port].append(msg)
+                    __send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
 
 
-    _log.info("Packet In Event: {}".format(str(packet_in_event.__dict__)))
-    #
-    # if not this_controller_uuid:
-    #     this_controller_uuid = database.GetDatabaseInfo()["uuid"]
-    #
-    # ofp_parser = msg.datapath.ofproto_parser
-    # ofp = msg.datapath.ofproto
-    # this_datapath_id = msg.datapath.id
-    # in_port = None
-    # in_port_mac = None
-    #
-    # volatile_information = database.QueryVolatileInfo()
-    # ipv4_network = volatile_information["ipv4_network"]
-    # ipv4_service_str = str(volatile_information["ipv4_service"])
-    # mac_service = volatile_information["mac_service"]
-    #
-    # if msg.match:
-    #     for match_field in msg.match.fields:
-    #         if type(match_field) is ofp_parser.MTInPort:
-    #             in_port = match_field.value
-    #             in_port_mac = msg.datapath.ports[in_port].hw_addr
-    #
-    #
-    # pkt = Ether(msg.data)
-    # _log.debug("-"*150)
-    # _log.debug(
-    #     "Packet-In at {:s} from {:d}, port {:d} with type 0x{:04x}".format(
-    #         time.ctime(timestamp), msg.datapath.id, in_port, pkt.type
-    #     )
-    # )
-    # #_log.debug("\n".join(("{}:{}".format(key, msg.datapath.__dict__['ports'][key]) for key in msg.datapath.__dict__['ports'])))
-    # # _log.info("Ethernet Packet - Source: {:s}; Destiny: {:s}; EtherType: 0x{:04x}".format(
-    # #     pkt.src, pkt.dst, pkt.type)
-    # # )
-    #
-    # layer_num = 0
-    # if pkt.type == 0xBBBB:  ###  ArchSDN Hello Packet : Ether Type -> 0xAAAA
-    #     layer_num += 1
-    #     archsdn_layer = memoryview(pkt.getlayer(layer_num).fields['load'])
-    #     if len(archsdn_layer) < 2:
-    #         _log.warning(
-    #             "ArchSDN Beacon Ignored. Payload length is lower than 2.".format(len(archsdn_layer))
-    #         )
-    #         return
-    #
-    #     (msg_type,) = struct.unpack("!H", archsdn_layer[0:2])
-    #     msg_payload = archsdn_layer[2:]
-    #
-    #     if msg_type == 1:
-    #         if (len(msg_payload) < 24):
-    #             _log.warning(
-    #                 "ArchSDN Beacon Ignored. It has invalid size: it's {:d} when it should be at least 24".format(
-    #                     len(msg_payload)
-    #                 )
-    #             )
-    #             return
-    #
-    #         (sender_controller_uuid_bytes, sender_datapath_id, port_out) = struct.unpack("!16sQH", msg_payload[0:26])
-    #         sender_controller_uuid = uuid.UUID(bytes=sender_controller_uuid_bytes)
-    #
-    #         _log.debug(
-    #             "{:s}Received Beacon Packet from Controller {:s} using Switch {:d}".format(
-    #                 " "*layer_num*2, str(sender_controller_uuid), sender_datapath_id
-    #             )
-    #         )
-    #
-    #         if this_controller_uuid != sender_controller_uuid:
-    #             if not cluster_network.isConnected2Sector(this_datapath_id, in_port, sender_controller_uuid):
-    #                 cluster_network.RegisterSector(this_datapath_id, in_port, sender_controller_uuid, port_out)
-    #             # Don't remove flow in this port, because it may be connected to a switch and other controllers
-    #             #   might send their beacons at a later time.
-    #         else:
-    #             if not cluster_network.isSwitchConnected2Switch(sender_datapath_id, this_datapath_id, in_port):
-    #                 cluster_network.ConnectToSwitch(this_datapath_id, sender_datapath_id, in_port)
-    #             if not cluster_network.isSwitchConnected2Switch(this_datapath_id, sender_datapath_id, port_out):
-    #                 cluster_network.ConnectToSwitch(sender_datapath_id, this_datapath_id, port_out)
-    #     else:
-    #         _log.warning("Ignored ArchSDN Message (Unknown type: {:d})".format(msg_type))
-    #
-    # elif pkt.haslayer(DHCP):  # https://tools.ietf.org/rfc/rfc2132.txt
-    #     layer_num += 1
-    #     ipv4_layer = pkt[IP]
-    #     bootp_layer = pkt[BOOTP]
-    #     dhcp_layer = pkt[DHCP]
-    #
-    #     dhcp_layer_options = dict(filter((lambda x: len(x) == 2), dhcp_layer.options))
-    #     if 'message-type' in dhcp_layer_options:
-    #         if dhcp_layer_options['message-type'] is 1:  # A DHCP DISCOVER packet was received
-    #             central_proxy = get_central_proxy()
-    #             try:
-    #                 _log.debug(
-    #                     "{:s}Received DHCP Discover packet from host with MAC {:s} on Switch {:d} at port {:d}".format(
-    #                         " " * layer_num * 2, pkt.src, this_datapath_id, in_port
-    #                     )
-    #                 )
-    #
-    #                 client_id = database.Query_Client_ID(this_datapath_id, in_port, EUI(pkt.src))
-    #                 client_info = database.Query_Client_Info(client_id)  # Lets try to check if the host is registered
-    #                 hostname = central_proxy.QueryClientInfo(location=(this_controller_uuid, client_id))["name"]
-    #
-    #             # Exception is raised if host is not registered at the controller database
-    #             except database.Exceptions.Client_Not_Registered:
-    #                 # Controller registers a new host at the local database, then at the Central and updates the
-    #                 #   local host registration with the IPs supplied by Central.
-    #
-    #                 client_id = database.Register_Client(this_datapath_id, in_port, EUI(pkt.src))
-    #                 (client_ipv4, client_ipv6, hostname) = central_proxy.RegisterClient(
-    #                     controller_uuid=this_controller_uuid, client_id=client_id
-    #                 )
-    #                 database.Update_Client_Addresses(client_id=client_id, ipv4=client_ipv4, ipv6=client_ipv6)
-    #                 client_info = database.Query_Client_Info(client_id)
-    #
-    #             client_ipv4 = client_info["ipv4"]
-    #             client_ipv6 = client_info["ipv6"]
-    #
-    #             # A DHCP Offer packet is tailored specifically for the new host.
-    #             dhcp_offer = Ether(src=str(mac_service), dst=pkt.src) \
-    #                         /IP(src=ipv4_service_str, dst="255.255.255.255") \
-    #                         /UDP() \
-    #                         /BOOTP(
-    #                             op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags,
-    #                             sname=str(this_controller_uuid), yiaddr=str(client_ipv4), chaddr=bootp_layer.chaddr
-    #                         ) \
-    #                         /DHCP(
-    #                             options=[
-    #                                 ("message-type", "offer"),
-    #                                 ("server_id", ipv4_service_str),
-    #                                 ("lease_time", 43200),
-    #                                 ("subnet_mask", str(ipv4_network.netmask)),
-    #                                 ("router", ipv4_service_str),
-    #                                 ("hostname", "{:d}".format(client_id).encode("ascii")),
-    #                                 ("name_server", ipv4_service_str),
-    #                                 ("name_server", "8.8.8.8"),
-    #                                 ("domain", "archsdn".encode("ascii")),
-    #                                 ("renewal_time", 21600),
-    #                                 ("rebinding_time", 37800),
-    #                                 "end"
-    #                             ]
-    #                         )
-    #
-    #             pad = Padding(load=" "*(300-len(dhcp_offer)))
-    #             dhcp_offer = dhcp_offer / pad
-    #
-    #             # The controller sends the DHCP Offer packet to the host.
-    #             msg.datapath.send_msg(
-    #                 ofp_parser.OFPPacketOut(
-    #                     datapath=msg.datapath,
-    #                     buffer_id=ofp.OFP_NO_BUFFER,
-    #                     in_port=in_port,
-    #                     actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_offer))],  #
-    #                     data=bytes(dhcp_offer)
-    #                 )
-    #             )
-    #             ctrl_send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
-    #
-    #         elif dhcp_layer_options['message-type'] is 3:  # A DHCP Request packet was received
-    #             try:
-    #                 _log.debug(
-    #                     "{:s}Received DHCP Request packet from host with MAC {:s} on Switch {:d} at port {:d}".format(
-    #                         " " * layer_num * 2, pkt.src, this_datapath_id, in_port
-    #                     )
-    #                 )
-    #
-    #                 # It is necessary to check if the host is already registered at the controller database
-    #                 client_id = database.Query_Client_ID(this_datapath_id, in_port, EUI(pkt.src))
-    #                 client_info = database.Query_Client_Info(client_id)
-    #                 client_ipv4 = client_info["ipv4"]
-    #
-    #                 # Activate a flow to redirect to the controller ARP Request packets sent from the host to the
-    #                 #   controller, from in_port.
-    #                 match = ofp_parser.OFPMatch(
-    #                     in_port=in_port, eth_dst='ff:ff:ff:ff:ff:ff', eth_src=pkt.src, eth_type=0x0806,
-    #                     arp_op=1, arp_spa=str(client_ipv4), arp_tpa=(ipv4_service_str, 0xFFFFFFFF),
-    #                     arp_sha=pkt.src, arp_tha='00:00:00:00:00:00'
-    #                 )
-    #                 actions = [ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)]
-    #                 inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
-    #                 msg.datapath.send_msg(
-    #                     ofp_parser.OFPFlowMod(
-    #                         datapath=msg.datapath,
-    #                         cookie=0,
-    #                         cookie_mask=0,
-    #                         table_id=0,
-    #                         command=ofp.OFPFC_ADD,
-    #                         idle_timeout=0,
-    #                         hard_timeout=0,
-    #                         priority=ofp.OFP_DEFAULT_PRIORITY,
-    #                         buffer_id=ofp.OFP_NO_BUFFER,
-    #                         out_port=ofp.OFPP_ANY,
-    #                         out_group=ofp.OFPG_ANY,
-    #                         flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-    #                         match=match,
-    #                         instructions=inst
-    #                     )
-    #                 )
-    #
-    #                 # Activate a flow to redirect to the controller ICMP Request packets sent from the host to the
-    #                 #   controller, from in_port.
-    #                 match = ofp_parser.OFPMatch(
-    #                     in_port=in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ETHER_TYPES["IPv4"],
-    #                     ip_proto=1, icmpv4_type=8, icmpv4_code=0
-    #                 )
-    #                 actions = [ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)]
-    #                 inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
-    #                 msg.datapath.send_msg(
-    #                     ofp_parser.OFPFlowMod(
-    #                         datapath=msg.datapath,
-    #                         cookie=0,
-    #                         cookie_mask=0,
-    #                         table_id=0,
-    #                         command=ofp.OFPFC_ADD,
-    #                         idle_timeout=0,
-    #                         hard_timeout=0,
-    #                         priority=ofp.OFP_DEFAULT_PRIORITY,
-    #                         buffer_id=ofp.OFP_NO_BUFFER,
-    #                         out_port=ofp.OFPP_ANY,
-    #                         out_group=ofp.OFPG_ANY,
-    #                         flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-    #                         match=match,
-    #                         instructions=inst
-    #                     )
-    #                 )
-    #
-    #                 # Activate a flow to redirect to the controller DNS packets sent from the host to the
-    #                 #   controller, from in_port.
-    #                 match = ofp_parser.OFPMatch(
-    #                     in_port=in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ETHER_TYPES["IPv4"],
-    #                     ipv4_src=str(client_ipv4), ipv4_dst=ipv4_service_str, ip_proto=17, udp_dst=53
-    #                 )
-    #                 actions = [ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)]
-    #                 inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS, actions)]
-    #                 msg.datapath.send_msg(
-    #                     ofp_parser.OFPFlowMod(
-    #                         datapath=msg.datapath,
-    #                         cookie=0,
-    #                         cookie_mask=0,
-    #                         table_id=0,
-    #                         command=ofp.OFPFC_ADD,
-    #                         idle_timeout=0,
-    #                         hard_timeout=0,
-    #                         priority=ofp.OFP_DEFAULT_PRIORITY,
-    #                         buffer_id=ofp.OFP_NO_BUFFER,
-    #                         out_port=ofp.OFPP_ANY,
-    #                         out_group=ofp.OFPG_ANY,
-    #                         flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-    #                         match=match,
-    #                         instructions=inst
-    #                     )
-    #                 )
-    #                 ctrl_send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
-    #
-    #
-    #                 #  Sending DHCP Ack to host
-    #                 dhcp_ack = Ether(src=str(mac_service), dst=pkt.src) \
-    #                             / IP(src=ipv4_service_str, dst="255.255.255.255") \
-    #                             / UDP() / BOOTP(
-    #                     op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags, yiaddr=str(client_ipv4),
-    #                     chaddr=EUI(pkt.src).packed
-    #                 ) / DHCP(
-    #                     options=[
-    #                         ("message-type", "ack"),
-    #                         ("server_id", ipv4_service_str),
-    #                         ("lease_time", 43200),
-    #                         ("subnet_mask", str(ipv4_network.netmask)),
-    #                         ("router", ipv4_service_str),
-    #                         ("hostname", "{:d}".format(client_id).encode("ascii")),
-    #                         ("name_server", ipv4_service_str),
-    #                         ("name_server", "8.8.8.8"),
-    #                         "end",
-    #                     ]
-    #                 )
-    #                 pad = Padding(load=" "*(300 - len(dhcp_ack)))
-    #                 dhcp_ack = dhcp_ack / pad
-    #
-    #                 msg.datapath.send_msg(
-    #                     ofp_parser.OFPPacketOut(
-    #                         datapath=msg.datapath,
-    #                         buffer_id=ofp.OFP_NO_BUFFER,
-    #                         in_port=in_port,
-    #                         actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_ack))],
-    #                         data=bytes(dhcp_ack)
-    #                     )
-    #                 )
-    #                 ctrl_send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
-    #
-    #                 if not cluster_network.isHostRegistered(client_id):
-    #                     cluster_network.ConnectHost(this_datapath_id, in_port, client_id, EUI(pkt.src))
-    #
-    #             except database.Exceptions.Client_Not_Registered:
-    #
-    #                 dhcp_nak = Ether(src=str(mac_service), dst=pkt.src) \
-    #                            / IP(src=ipv4_service_str, dst=ipv4_layer.src) \
-    #                            / UDP() \
-    #                            / BOOTP(
-    #                                 op=2, xid=bootp_layer.xid,
-    #                                 yiaddr=ipv4_layer.src, siaddr=ipv4_service_str, giaddr=ipv4_service_str,
-    #                                 chaddr=EUI(pkt.src).packed
-    #                             ) \
-    #                            / DHCP(
-    #                                 options=[
-    #                                     ("message-type", "nak"),
-    #                                     ("subnet_mask", str(ipv4_network.netmask)),
-    #                                     "end",
-    #                                 ]
-    #                             )
-    #
-    #                 msg.datapath.send_msg(
-    #                     ofp_parser.OFPPacketOut(
-    #                         datapath=msg.datapath,
-    #                         buffer_id=ofp.OFP_NO_BUFFER,
-    #                         in_port=in_port,
-    #                         actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_nak))],  #
-    #                         data=bytes(dhcp_nak)
-    #                     )
-    #                 )
-    #                 ctrl_send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
-    #
-    # elif pkt.haslayer(ARP):  # Answering to ARP Packet
-    #     layer_num += 1
-    #     arp_layer = pkt[ARP]
-    #     _log.debug(
-    #         "{:s}Received  ARP Packet - Summary:\n{:s}".format(" " * layer_num * 2, arp_layer.mysummary())
-    #     )
-    #     if arp_layer.ptype == ETHER_TYPES["IPv4"]:  # Answering to ARPv4 Packet
-    #         if arp_layer.pdst == ipv4_service_str:  # If the MAC Address is the Service MAC
-    #             arp_response = Ether(src=str(mac_service), dst=pkt.src) \
-    #                         / ARP(
-    #                             hwtype=arp_layer.hwtype,
-    #                             ptype=arp_layer.ptype,
-    #                             hwlen=arp_layer.hwlen,
-    #                             plen=arp_layer.plen,
-    #                             op="is-at",
-    #                             hwsrc=mac_service.packed,
-    #                             psrc=ipv4_service_str,
-    #                             hwdst=EUI(pkt.src).packed,
-    #                             pdst=arp_layer.psrc
-    #                         )
-    #             msg.datapath.send_msg(
-    #                 ofp_parser.OFPPacketOut(
-    #                     datapath=msg.datapath,
-    #                     buffer_id=ofp.OFP_NO_BUFFER,
-    #                     in_port=in_port,
-    #                     actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
-    #                     data=bytes(arp_response)
-    #                 )
-    #             )
-    #         else:  # If it is something else...
-    #             try:
-    #                 source_client_id = database.Query_Client_ID(datapath_id=this_datapath_id, port_id=in_port, mac=EUI(pkt.src))
-    #                 target_address_info = database.Query_Address_Information(ipv4=IPv4Address(arp_layer.pdst))
-    #
-    #                 #_log.debug("address_info: {}".format(target_address_info))
-    #                 source_entity = (cluster_network.Entity.HOST, source_client_id)
-    #                 target_entity = (cluster_network.Entity.HOST, target_address_info["client_id"])
-    #
-    #                 if not tunnels_manager.isPathActive(source_entity, target_entity):
-    #                     shortest_path_source_to_target = cluster_network.QueryLocalPath(source_entity, target_entity)
-    #                     _log.debug(
-    #                         "shortest path from {} to {}: Hash: {} Path: {}".format(
-    #                             source_entity, target_entity, hash(shortest_path_source_to_target),
-    #                             shortest_path_source_to_target)
-    #                     )
-    #                     tunnels_manager.Activate_Local_Tunnel(shortest_path_source_to_target)
-    #
-    #                 if not tunnels_manager.isPathActive(target_entity, source_entity):
-    #                     shortest_path_target_to_source = cluster_network.QueryLocalPath(target_entity, source_entity)
-    #                     _log.debug(
-    #                         "shortest path from {} to {}: Hash: {} Path: {}".format(
-    #                             target_entity, source_entity, hash(shortest_path_target_to_source),
-    #                             shortest_path_target_to_source
-    #                         )
-    #                     )
-    #                     tunnels_manager.Activate_Local_Tunnel(shortest_path_target_to_source)
-    #
-    #                 arp_response = Ether(src=str(target_address_info["mac"]), dst=pkt.src) \
-    #                                / ARP(
-    #                     hwtype=arp_layer.hwtype,
-    #                     ptype=arp_layer.ptype,
-    #                     hwlen=arp_layer.hwlen,
-    #                     plen=arp_layer.plen,
-    #                     op="is-at",
-    #                     hwsrc=target_address_info["mac"].packed,
-    #                     psrc=str(IPv4Address(arp_layer.pdst)),
-    #                     hwdst=EUI(pkt.src).packed,
-    #                     pdst=arp_layer.psrc
-    #                 )
-    #                 msg.datapath.send_msg(
-    #                     ofp_parser.OFPPacketOut(
-    #                         datapath=msg.datapath,
-    #                         buffer_id=ofp.OFP_NO_BUFFER,
-    #                         in_port=in_port,
-    #                         actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
-    #                         data=bytes(arp_response)
-    #                     )
-    #                 )
-    #
-    #             except database.Exceptions.Address_Not_Registered:
-    #                 central_proxy = get_central_proxy()
-    #                 client_info = central_proxy.QueryClientInfo(ipv4=IPv4Address(arp_layer.pdst))
-    #                 _log.debug("client_info: {}".format(client_info))
-    #     #elif arp_layer.ptype == ETHER_TYPES["IPv6"]:  # Answering to ARPv6 Packet
-    #     #    # TODO: implementar ARP reply com IPv6.
-    #     #    pass
-    #
-    #     else:
-    #         _log.debug(
-    #             "{:s}Ignoring ARP Packet with type {:d}".format(" " * layer_num * 2, arp_layer.ptype)
-    #         )
-    #
-    #
-    # elif pkt.haslayer(ICMP):
-    #     layer_num += 1
-    #     ip_layer = pkt[IP]
-    #     icmp_layer = pkt[ICMP]
-    #     data_layer = pkt[Raw]
-    #     _log.debug(
-    #         "{:s}Received ICMP Packet - Summary:\n{:s}".format(" " * layer_num * 2, icmp_layer.mysummary())
-    #     )
-    #     if ip_layer.dst == ipv4_service_str:
-    #         icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
-    #             / IP(src=ipv4_service_str, dst=ip_layer.src) \
-    #             / ICMP(
-    #                 type="echo-reply",
-    #                 id=icmp_layer.id,
-    #                 seq=icmp_layer.seq,
-    #             ) \
-    #             / Raw(data_layer.load)
-    #
-    #         msg.datapath.send_msg(
-    #             ofp_parser.OFPPacketOut(
-    #                 datapath=msg.datapath,
-    #                 buffer_id=ofp.OFP_NO_BUFFER,
-    #                 in_port=in_port,
-    #                 actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(icmp_reply))],
-    #                 data=bytes(icmp_reply)
-    #             )
-    #         )
-    #
-    # elif pkt.haslayer(DNS):
-    #     layer_num += 1
-    #     ip_layer = pkt[IP]
-    #     udp_layer = pkt[UDP]
-    #     dns_layer = pkt[DNS]
-    #     DNSQR_layer = pkt[DNSQR]
-    #
-    #     _log.debug(
-    #         "{:s}Received DNS Packet - Summary:\n{:s}".format(" " * layer_num * 2, dns_layer.mysummary())
-    #     )
-    #     qname_split = DNSQR_layer.qname.decode().split(".")[:-1]
-    #     _log.debug(qname_split)
-    #     if len(qname_split) == 3 and qname_split[-1] == "archsdn":
-    #         central_proxy = get_central_proxy()
-    #
-    #         try:
-    #             client_id = int(qname_split[0])
-    #         except ValueError as ve:
-    #             raise ValueError("DNS Query malformed. Client ID invalid.")
-    #
-    #         if "-" in qname_split[1]:
-    #             try:
-    #                 controller_uuid = uuid.UUID(qname_split[1])
-    #             except ValueError:
-    #                 raise ValueError("DNS Query malformed. Controller ID invalid.")
-    #         elif str.isalnum(qname_split[1]):
-    #             try:
-    #                 controller_uuid = uuid.UUID(int=int(qname_split[1]))
-    #             except ValueError:
-    #                 try:
-    #                     controller_uuid = uuid.UUID(int=int(qname_split[1], 16))
-    #                 except ValueError:
-    #                     raise ValueError("DNS Query malformed. Controller ID invalid.")
-    #         else:
-    #             raise ValueError("DNS Query malformed. Controller ID invalid")
-    #
-    #         # Query Central for Destination IP
-    #         # Return to client the IP
-    #         try:
-    #             client_info = central_proxy.QueryClientInfo(location=(controller_uuid, client_id))
-    #             dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-    #                         / IP(src=ipv4_service_str, dst=ip_layer.src) \
-    #                         / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-    #                         / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='ok',
-    #                               an=DNSRR(rrname=DNSQR_layer.qname, rdata=str(client_info["ipv4"]))
-    #                               )
-    #         except ClientNotRegistered:
-    #             dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-    #                         / IP(src=ipv4_service_str, dst=ip_layer.src) \
-    #                         / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-    #                         / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='name-error')
-    #
-    #         msg.datapath.send_msg(
-    #             ofp_parser.OFPPacketOut(
-    #                 datapath=msg.datapath,
-    #                 buffer_id=ofp.OFP_NO_BUFFER,
-    #                 in_port=in_port,
-    #                 actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dns_reply))],
-    #                 data=bytes(dns_reply)
-    #             )
-    #         )
-    # else:
-    #     layers = []
-    #
-    #     if _log.getEffectiveLevel() == logging.DEBUG:
-    #         counter = 0
-    #         while True:
-    #             layer = pkt.getlayer(counter)
-    #             if (layer != None):
-    #                 layers.append("{:s}".format(str(layer.name)))
-    #             else:
-    #                 break
-    #             counter += 1
-    #     _log.debug(
-    #         "{:s}Ignoring Received Packet :\n  {:s}".format(" " * layer_num * 2, "\n  ".join(layers))
-    #     )
-    #
-    #
+                    #  Sending DHCP Ack to host
+                    dhcp_ack = Ether(src=str(mac_service), dst=pkt.src) \
+                        / IP(src=str(ipv4_service), dst="255.255.255.255") \
+                        / UDP() / BOOTP(
+                        op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags, yiaddr=str(client_ipv4),
+                        chaddr=EUI(pkt.src).packed
+                    ) / DHCP(
+                        options=[
+                            ("message-type", "ack"),
+                            ("server_id", str(ipv4_service)),
+                            ("lease_time", 43200),
+                            ("subnet_mask", str(ipv4_network.netmask)),
+                            ("router", str(ipv4_service)),
+                            ("hostname", "{:d}".format(client_id).encode("ascii")),
+                            ("name_server", str(ipv4_service)),
+                            ("name_server", "8.8.8.8"),
+                            "end",
+                        ]
+                    )
+                    pad = Padding(load=" "*(300 - len(dhcp_ack)))
+                    dhcp_ack = dhcp_ack / pad
+
+                    datapath_obj.send_msg(
+                        ofp_parser.OFPPacketOut(
+                            datapath=msg.datapath,
+                            buffer_id=ofp.OFP_NO_BUFFER,
+                            in_port=in_port,
+                            actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_ack))],
+                            data=bytes(dhcp_ack)
+                        )
+                    )
+                    __send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+
+                except database.ClientNotRegistered:
+                    dhcp_nak = Ether(src=str(mac_service), dst=pkt.src) \
+                               / IP(src=str(ipv4_service), dst=ipv4_layer.src) \
+                               / UDP() \
+                               / BOOTP(
+                                    op=2, xid=bootp_layer.xid,
+                                    yiaddr=ipv4_layer.src, siaddr=str(ipv4_service), giaddr=str(ipv4_service),
+                                    chaddr=EUI(pkt.src).packed
+                                ) \
+                               / DHCP(
+                                    options=[
+                                        ("message-type", "nak"),
+                                        ("subnet_mask", str(ipv4_network.netmask)),
+                                        "end",
+                                    ]
+                                )
+
+                    datapath_obj.send_msg(
+                        ofp_parser.OFPPacketOut(
+                            datapath=msg.datapath,
+                            buffer_id=ofp.OFP_NO_BUFFER,
+                            in_port=in_port,
+                            actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_nak))],  #
+                            data=bytes(dhcp_nak)
+                        )
+                    )
+                    __send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+
+    elif pkt.haslayer(ARP):  # Answering to ARP Packet
+        layer_num += 1
+        arp_layer = pkt[ARP]
+        _log.debug(
+            "{:s}Received  ARP Packet - Summary:\n{:s}".format(" " * layer_num * 2, arp_layer.mysummary())
+        )
+        if arp_layer.ptype == ETHER_TYPES["IPv4"]:  # Answering to ARPv4 Packet
+            if arp_layer.pdst == str(ipv4_service):  # If the MAC Address is the Service MAC
+                arp_response = Ether(src=str(mac_service), dst=pkt.src) \
+                            / ARP(
+                                hwtype=arp_layer.hwtype,
+                                ptype=arp_layer.ptype,
+                                hwlen=arp_layer.hwlen,
+                                plen=arp_layer.plen,
+                                op="is-at",
+                                hwsrc=mac_service.packed,
+                                psrc=str(ipv4_service),
+                                hwdst=EUI(pkt.src).packed,
+                                pdst=arp_layer.psrc
+                            )
+                datapath_obj.send_msg(
+                    ofp_parser.OFPPacketOut(
+                        datapath=msg.datapath,
+                        buffer_id=ofp.OFP_NO_BUFFER,
+                        in_port=in_port,
+                        actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
+                        data=bytes(arp_response)
+                    )
+                )
+            else:  # If it is something else...
+                pass
+                # try:
+                #     source_client_id = database.Query_Client_ID(datapath_id=datapath_id, port_id=in_port, mac=EUI(pkt.src))
+                #     target_address_info = database.Query_Address_Information(ipv4=IPv4Address(arp_layer.pdst))
+                #
+                #     #_log.debug("address_info: {}".format(target_address_info))
+                #     source_entity = (cluster_network.Entity.HOST, source_client_id)
+                #     target_entity = (cluster_network.Entity.HOST, target_address_info["client_id"])
+                #
+                #     if not tunnels_manager.isPathActive(source_entity, target_entity):
+                #         shortest_path_source_to_target = cluster_network.QueryLocalPath(source_entity, target_entity)
+                #         _log.debug(
+                #             "shortest path from {} to {}: Hash: {} Path: {}".format(
+                #                 source_entity, target_entity, hash(shortest_path_source_to_target),
+                #                 shortest_path_source_to_target)
+                #         )
+                #         tunnels_manager.Activate_Local_Tunnel(shortest_path_source_to_target)
+                #
+                #     if not tunnels_manager.isPathActive(target_entity, source_entity):
+                #         shortest_path_target_to_source = cluster_network.QueryLocalPath(target_entity, source_entity)
+                #         _log.debug(
+                #             "shortest path from {} to {}: Hash: {} Path: {}".format(
+                #                 target_entity, source_entity, hash(shortest_path_target_to_source),
+                #                 shortest_path_target_to_source
+                #             )
+                #         )
+                #         tunnels_manager.Activate_Local_Tunnel(shortest_path_target_to_source)
+                #
+                #     arp_response = Ether(src=str(target_address_info["mac"]), dst=pkt.src) \
+                #                    / ARP(
+                #         hwtype=arp_layer.hwtype,
+                #         ptype=arp_layer.ptype,
+                #         hwlen=arp_layer.hwlen,
+                #         plen=arp_layer.plen,
+                #         op="is-at",
+                #         hwsrc=target_address_info["mac"].packed,
+                #         psrc=str(IPv4Address(arp_layer.pdst)),
+                #         hwdst=EUI(pkt.src).packed,
+                #         pdst=arp_layer.psrc
+                #     )
+                #     msg.datapath.send_msg(
+                #         ofp_parser.OFPPacketOut(
+                #             datapath=msg.datapath,
+                #             buffer_id=ofp.OFP_NO_BUFFER,
+                #             in_port=in_port,
+                #             actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
+                #             data=bytes(arp_response)
+                #         )
+                #     )
+                #
+                # except database.Exceptions.Address_Not_Registered:
+                #     central_proxy = get_central_proxy()
+                #     client_info = central_proxy.QueryClientInfo(ipv4=IPv4Address(arp_layer.pdst))
+                #     _log.debug("client_info: {}".format(client_info))
+        #elif arp_layer.ptype == ETHER_TYPES["IPv6"]:  # Answering to ARPv6 Packet
+        #    # TODO: implementar ARP reply com IPv6.
+        #    pass
+
+        else:
+            _log.debug(
+                "Ignoring ARP Packet with type: {:d}".format(arp_layer.ptype)
+            )
+
+    elif pkt.haslayer(ICMP):
+        layer_num += 1
+        ip_layer = pkt[IP]
+        icmp_layer = pkt[ICMP]
+        data_layer = pkt[Raw]
+        _log.debug(
+            "Received ICMP Packet - Summary: {:s}".format(icmp_layer.mysummary())
+        )
+        if ip_layer.dst == str(ipv4_service):
+            icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
+                / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                / ICMP(
+                    type="echo-reply",
+                    id=icmp_layer.id,
+                    seq=icmp_layer.seq,
+                ) \
+                / Raw(data_layer.load)
+
+            datapath_obj.send_msg(
+                ofp_parser.OFPPacketOut(
+                    datapath=msg.datapath,
+                    buffer_id=ofp.OFP_NO_BUFFER,
+                    in_port=in_port,
+                    actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(icmp_reply))],
+                    data=bytes(icmp_reply)
+                )
+            )
+
+    elif pkt.haslayer(DNS):
+        layer_num += 1
+        ip_layer = pkt[IP]
+        udp_layer = pkt[UDP]
+        dns_layer = pkt[DNS]
+        DNSQR_layer = pkt[DNSQR]
+
+        _log.debug(
+            "Received DNS Packet - Summary: {:s}".format(dns_layer.mysummary())
+        )
+        qname_split = DNSQR_layer.qname.decode().split(".")[:-1]
+        _log.debug(qname_split)
+        if len(qname_split) == 3 and qname_split[-1] == "archsdn":
+            try:
+                client_id = int(qname_split[0])
+            except ValueError as ve:
+                raise ValueError("DNS Query malformed. Client ID invalid.")
+
+            if "-" in qname_split[1]:
+                try:
+                    controller_uuid = UUID(qname_split[1])
+                except ValueError:
+                    raise ValueError("DNS Query malformed. Controller ID invalid.")
+            elif str.isalnum(qname_split[1]):
+                try:
+                    controller_uuid = UUID(int=int(qname_split[1]))
+                except ValueError:
+                    try:
+                        controller_uuid = UUID(int=int(qname_split[1], 16))
+                    except ValueError:
+                        raise ValueError("DNS Query malformed. Controller ID invalid.")
+            else:
+                raise ValueError("DNS Query malformed. Controller ID invalid")
+
+            # Query Central for Destination IP
+            # Return to client the IP
+            try:
+                client_info = central.query_client_info(controller_uuid, client_id)
+                dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
+                            / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                            / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
+                            / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='ok',
+                                  an=DNSRR(rrname=DNSQR_layer.qname, rdata=str(client_info["ipv4"]))
+                                  )
+            except database.ClientNotRegistered:
+                dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
+                            / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                            / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
+                            / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='name-error')
+
+            datapath_obj.send_msg(
+                ofp_parser.OFPPacketOut(
+                    datapath=msg.datapath,
+                    buffer_id=ofp.OFP_NO_BUFFER,
+                    in_port=in_port,
+                    actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dns_reply))],
+                    data=bytes(dns_reply)
+                )
+            )
+    else:
+        layers = []
+
+        if _log.getEffectiveLevel() == logging.DEBUG:
+            counter = 0
+            while True:
+                layer = pkt.getlayer(counter)
+                if layer is not None:
+                    layers.append("{:s}".format(str(layer.name)))
+                else:
+                    break
+                counter += 1
+        _log.debug(
+            "Ignoring Received Packet:[{:s}]".format("][".join(layers))
+        )
+
+

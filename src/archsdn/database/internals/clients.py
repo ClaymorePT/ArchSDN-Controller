@@ -5,7 +5,7 @@ from netaddr import EUI
 from ipaddress import IPv4Address, IPv6Address
 from sqlite3 import IntegrityError
 from .shared_data import GetConnector
-from .exceptions import Client_Not_Registered, Client_Already_Registered,Address_Not_Registered
+from .exceptions import ClientNotRegistered, ClientAlreadyRegistered,AddressNotRegistered
 
 _log = logging.getLogger(__name__)
 
@@ -23,16 +23,17 @@ def query_info(client_id):
             res = db_cursor.fetchone()
             if res is None:
                 assert not GetConnector().in_transaction, "database with active transaction"
-                raise Client_Not_Registered()
+                raise ClientNotRegistered()
 
-            client_info = {"client_id": res[0],
-                            "mac": EUI(int.from_bytes(res[1], "big")),
-                            "ipv4": IPv4Address(res[2]),
-                            "ipv6": IPv6Address(res[3]),
-                            "datapath": res[4],
-                            "port": res[5],
-                            "registration_date": time.localtime(res[6]),
-                            }
+            client_info = {
+                "client_id": res[0],
+                "mac": EUI(int.from_bytes(res[1], "big")),
+                "ipv4": IPv4Address(res[2]),
+                "ipv6": IPv6Address(res[3]),
+                "datapath": res[4],
+                "port": res[5],
+                "registration_date": time.localtime(res[6]),
+            }
             _log.debug("Querying Client {:d} info: {:s}".format(client_id, str(client_info)))
             assert not GetConnector().in_transaction, "database with active transaction"
             return client_info
@@ -59,7 +60,7 @@ def query_client_id(datapath_id, port_id, mac):
             res = db_cursor.fetchone()
             if res is None:
                 assert not GetConnector().in_transaction, "database with active transaction"
-                raise Client_Not_Registered()
+                raise ClientNotRegistered()
             return res[0]
     except Exception as ex:
         assert not GetConnector().in_transaction, "database with active transaction"
@@ -82,7 +83,7 @@ def query_address_info(ipv4=None, ipv6=None):
                 res = db_cursor.fetchone()
                 if res is None:
                     assert not GetConnector().in_transaction, "database with active transaction"
-                    raise Address_Not_Registered()
+                    raise AddressNotRegistered()
 
                 return {"client_id": res[0],
                             "mac": EUI(int.from_bytes(res[1], "big")),
@@ -98,7 +99,7 @@ def query_address_info(ipv4=None, ipv6=None):
                 res = db_cursor.fetchone()
                 if res is None:
                     assert not GetConnector().in_transaction, "database with active transaction"
-                    raise Address_Not_Registered()
+                    raise AddressNotRegistered()
 
                 return {"client_id": res[0],
                             "mac": EUI(int.from_bytes(res[1], "big")),
@@ -139,7 +140,7 @@ def register(datapath_id, port_id, mac):
     except IntegrityError as ex:
         assert not GetConnector().in_transaction, "database with active transaction"
         if "UNIQUE constraint failed" in str(ex):
-            raise Client_Already_Registered()
+            raise ClientAlreadyRegistered()
         raise ex
 
 
@@ -156,7 +157,7 @@ def remove(client_id):
             if db_cursor.rowcount == 0:
                 database_connector.rollback()
                 assert not GetConnector().in_transaction, "database with active transaction"
-                raise Client_Not_Registered()
+                raise ClientNotRegistered()
 
             assert db_cursor.rowcount == 1, "More than one client registry was removed. This should not happen."
             database_connector.commit()
@@ -183,7 +184,7 @@ def update_addresses(client_id, ipv4=None, ipv6=None):
             res = db_cursor.fetchone()
             if res[0] == 0:
                 assert not GetConnector().in_transaction, "database with active transaction"
-                raise Client_Not_Registered()
+                raise ClientNotRegistered()
 
             if ipv4:
                 db_cursor.execute("INSERT INTO clients_ipv4s(ipv4)  VALUES (?) ", (int(ipv4), ))
@@ -205,5 +206,5 @@ def update_addresses(client_id, ipv4=None, ipv6=None):
     except IntegrityError as ex:
         assert not GetConnector().in_transaction, "database with active transaction"
         if "UNIQUE constraint failed" in str(ex):
-            raise Client_Already_Registered()
+            raise ClientAlreadyRegistered()
         raise ex

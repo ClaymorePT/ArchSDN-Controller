@@ -6,7 +6,7 @@ from zlib import compress, decompress
 from sqlite3 import IntegrityError
 
 from .shared_data import GetConnector
-from .exceptions import Flow_Already_Registered, Flow_Not_Registered, Datapath_Not_Registered
+from .exceptions import FlowAlreadyRegistered, FlowNotRegistered, DatapathNotRegistered
 
 _log = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def save(datapath_id, flow_description):
         _log.error(str(ex))
         assert not GetConnector().in_transaction, "database with active transaction"
         if "UNIQUE constraint failed" in str(ex):
-            raise Flow_Already_Registered()
+            raise FlowAlreadyRegistered()
         raise ex
     except Exception as ex:
         _log.error(str(ex))
@@ -72,10 +72,10 @@ def info(datapath_id, cookie_id):
                     _log.debug(
                         "Getting Flow info for Cookie {:d} but does not exist.".format(cookie_id)
                     )
-                    raise Datapath_Not_Registered()
+                    raise DatapathNotRegistered()
 
                 _log.debug("Getting Flow info for Cookie {:d} but flow does not exist.".format(cookie_id))
-                raise Flow_Not_Registered()
+                raise FlowNotRegistered()
 
             datapath_id = res[0]
             flow_description = pickle.loads(decompress(res[1]))
@@ -89,7 +89,7 @@ def info(datapath_id, cookie_id):
     except IntegrityError as ex:
         _log.error(str(ex))
         if "UNIQUE constraint failed" in str(ex):
-            raise Flow_Already_Registered()
+            raise FlowAlreadyRegistered()
         raise ex
     except Exception as ex:
         _log.error(str(ex))
@@ -117,12 +117,12 @@ def remove(datapath_id, cookie_id):
                         "Getting Flow info for Datapath {:d}, Cookie {:d} but Datapath does not exist.".format(
                             datapath_id, cookie_id)
                     )
-                    raise Datapath_Not_Registered()
+                    raise DatapathNotRegistered()
                 _log.debug(
                     "Removing Flow for Datapath {:d}, Cookie {:d} but flow does not exist.".format(
                         datapath_id, cookie_id)
                 )
-                raise Flow_Not_Registered()
+                raise FlowNotRegistered()
             assert db_cursor.rowcount == 1, "More than one flow was deleted. This should not happen."
             _log.debug("Removed Flow for Datapath {:d} with Cookie {:d}.".format(datapath_id, cookie_id))
     except Exception as ex:
