@@ -62,6 +62,9 @@ class IPv4InfoAlreadyRegistered(CentralException):
 class IPv6InfoAlreadyRegistered(CentralException):
     pass
 
+class NoResultsAvailable(CentralException):
+    pass
+
 
 def initialise(central_ip, central_port):
     global __semaphore, __context, __socket, __location, __pool
@@ -329,3 +332,21 @@ def remove_client(controller_uuid, client_id):
         if isinstance(answer, zmq_messages.RPLControllerNotRegistered):
             raise ControllerNotRegistered()
         raise UnexpectedResponse(answer)
+
+
+def query_address_info(ipv4=None, ipv6=None):
+    assert __semaphore and __context and __socket and __location, "communication not initialised"
+    assert not ((ipv4 is None) and (ipv6 is None)), "ipv4 and ipv6 cannot be null at the same time"
+    assert isinstance(ipv4, IPv4Address) or ipv4 is None, "ipv4 is invalid"
+    assert isinstance(ipv6, IPv6Address) or ipv6 is None, "ipv6 is invalid"
+
+    with __semaphore:
+        msg = zmq_messages.REQAddressInfo(ipv4, ipv6)
+
+        answer = __make_request(msg)
+
+        if isinstance(answer, zmq_messages.RPLAddressInfo):
+            return answer
+        if isinstance(answer, zmq_messages.RPLNoResultsAvailable):
+            raise NoResultsAvailable()
+

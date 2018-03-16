@@ -85,13 +85,14 @@ def query_address_info(ipv4=None, ipv6=None):
                     assert not GetConnector().in_transaction, "database with active transaction"
                     raise AddressNotRegistered()
 
-                return {"client_id": res[0],
-                            "mac": EUI(int.from_bytes(res[1], "big")),
-                            "ipv6": IPv6Address(res[2]),
-                            "datapath": res[3],
-                            "port": res[4],
-                            "registration_date": time.localtime(res[5]),
-                            }
+                return {
+                    "client_id": res[0],
+                    "mac": EUI(int.from_bytes(res[1], "big")),
+                    "ipv6": IPv6Address(res[2]),
+                    "datapath": res[3],
+                    "port": res[4],
+                    "registration_date": time.localtime(res[5]),
+                }
             if ipv6:
                 db_cursor.execute("SELECT client_id, mac, ipv4, datapath, port_id, registration_date "
                                   "FROM clients_view WHERE clients_view.ipv6 == ?", (ipv6.packed,))
@@ -101,13 +102,14 @@ def query_address_info(ipv4=None, ipv6=None):
                     assert not GetConnector().in_transaction, "database with active transaction"
                     raise AddressNotRegistered()
 
-                return {"client_id": res[0],
-                            "mac": EUI(int.from_bytes(res[1], "big")),
-                            "ipv4": IPv6Address(res[2]),
-                            "datapath": res[3],
-                            "port": res[4],
-                            "registration_date": time.localtime(res[5]),
-                            }
+                return {
+                    "client_id": res[0],
+                    "mac": EUI(int.from_bytes(res[1], "big")),
+                    "ipv4": IPv6Address(res[2]),
+                    "datapath": res[3],
+                    "port": res[4],
+                    "registration_date": time.localtime(res[5]),
+                }
 
     except Exception as ex:
         assert not GetConnector().in_transaction, "database with active transaction"

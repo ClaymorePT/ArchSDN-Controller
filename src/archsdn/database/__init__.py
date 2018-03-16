@@ -15,7 +15,7 @@ __all__ = [
     "register_client",
     "query_client_info",
     "query_client_id",
-    "query_address_information",
+    "query_address_info",
     "remove_client",
     "update_client_addresses",
     "query_volatile_info",

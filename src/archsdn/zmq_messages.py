@@ -26,7 +26,8 @@ def __register_msg(cls):
 
 
 def dumps(obj):
-    return pickle.dumps((type(obj).__name__, obj.__getstate__()))
+    data = (type(obj).__name__, obj.__getstate__())
+    return pickle.dumps(data)
 
 
 def loads(obj_bytes):
@@ -381,6 +382,34 @@ class REQUnregisterAllClients(RequestMessage):
         self.controller_id = UUID(bytes=state)
 
 
+class REQAddressInfo(RequestMessage):
+    '''
+        Message used to request information about the network addresses.
+        Attributes (one is required):
+              - IPv4 (ipaddress.IPv4Address) - Optional
+              - IPv6 (ipaddress.IPv6Address) - Optional
+
+    '''
+
+    def __init__(self, ipv4=None, ipv6=None):
+        assert not ((ipv4 is None) and (ipv6 is None)), "ipv4 and ipv6 cannot be null at the same time"
+        assert isinstance(ipv4, IPv4Address) or ipv4 is None, "ipv4 is invalid"
+        assert isinstance(ipv6, IPv6Address) or ipv6 is None, "ipv6 is invalid"
+
+        self.ipv4 = ipv4
+        self.ipv6 = ipv6
+
+    def __getstate__(self):
+        return (
+            self.ipv4.packed if self.ipv4 else None,
+            self.ipv6.packed if self.ipv6 else None,
+        )
+
+    def __setstate__(self, state):
+        self.ipv4 = IPv4Address(state[0]) if state[0] else None
+        self.ipv6 = IPv6Address(state[1]) if state[1] else None
+
+
 __register_msg(REQLocalTime)
 __register_msg(REQCentralNetworkPolicies)
 __register_msg(REQRegisterController)
@@ -393,6 +422,7 @@ __register_msg(REQRemoveControllerClient)
 __register_msg(REQIsClientAssociated)
 __register_msg(REQClientInformation)
 __register_msg(REQUnregisterAllClients)
+__register_msg(REQAddressInfo)
 
 
 ########################
@@ -533,6 +563,38 @@ class RPLClientInformation(ReplyMessage):
         self.registration_date = state[3]
 
 
+class RPLAddressInfo(ReplyMessage):
+    '''
+        Message used by the central manager to reply with the information about the queried network address
+    '''
+
+    def __init__(self, controller_id, client_id, name, registration_date):
+        assert isinstance(controller_id, UUID), \
+            "uuid is not a uuid.UUID object instance: {:s}".format(repr(controller_id))
+        assert isinstance(client_id, int), "client_id is not a int object instance: {:s}".format(repr(client_id))
+        assert 0 <= client_id < 0xFFFFFFFF, "client_id value is invalid: value {:d}".format(client_id)
+
+        self.controller_id = controller_id
+        self.client_id = client_id
+        self.name = name
+        self.registration_date = registration_date
+
+    def __getstate__(self):
+        return (
+            self.controller_id.bytes,
+            self.client_id.to_bytes(4, 'big'),
+            self.name.encode('ascii'),
+            self.registration_date
+
+        )
+
+    def __setstate__(self, state):
+        self.controller_id = UUID(bytes=state[0])
+        self.client_id = int.from_bytes(state[1], 'big')
+        self.name = state[2].decode('ascii')
+        self.registration_date = state[3]
+
+
 __register_msg(RPLSuccess)
 __register_msg(RPLAfirmative)
 __register_msg(RPLNegative)
@@ -540,6 +602,7 @@ __register_msg(RPLLocalTime)
 __register_msg(RPLCentralNetworkPolicies)
 __register_msg(RPLControllerInformation)
 __register_msg(RPLClientInformation)
+__register_msg(RPLAddressInfo)
 
 ###########################
 ## Subscription Messages ##
@@ -582,6 +645,13 @@ class RPLErrorNoState(BaseError):
 
     def __setstate__(self, state):
         pass
+
+
+class RPLNoResultsAvailable(RPLErrorNoState):
+    '''
+         Error message to reply the absence of results
+    '''
+    pass
 
 
 class RPLControllerNotRegistered(RPLErrorNoState):
@@ -627,6 +697,7 @@ class RPLIPv6InfoAlreadyRegistered(RPLErrorNoState):
 
 
 __register_msg(RPLGenericError)
+__register_msg(RPLNoResultsAvailable)
 __register_msg(RPLControllerNotRegistered)
 __register_msg(RPLControllerAlreadyRegistered)
 __register_msg(RPLClientNotRegistered)

@@ -1,5 +1,5 @@
 import logging
-from ipaddress import ip_address
+from ipaddress import ip_address, IPv4Address
 import sys
 import struct
 import time
@@ -904,22 +904,63 @@ def process_packet_in_event(packet_in_event):
         layer_num += 1
         arp_layer = pkt[ARP]
         _log.debug(
-            "{:s}Received  ARP Packet - Summary:\n{:s}".format(" " * layer_num * 2, arp_layer.mysummary())
+            "Received  ARP Packet from {:s} requesting the MAC address for target {:s}.".format(
+                arp_layer.psrc, arp_layer.pdst
+            )
         )
         if arp_layer.ptype == ETHER_TYPES["IPv4"]:  # Answering to ARPv4 Packet
             if arp_layer.pdst == str(ipv4_service):  # If the MAC Address is the Service MAC
-                arp_response = Ether(src=str(mac_service), dst=pkt.src) \
-                            / ARP(
-                                hwtype=arp_layer.hwtype,
-                                ptype=arp_layer.ptype,
-                                hwlen=arp_layer.hwlen,
-                                plen=arp_layer.plen,
-                                op="is-at",
-                                hwsrc=mac_service.packed,
-                                psrc=str(ipv4_service),
-                                hwdst=EUI(pkt.src).packed,
-                                pdst=arp_layer.psrc
+                _log.debug("Arp target {:s} is the controller of this sector. ".format(arp_layer.pdst))
+                mac_target_str = mac_service
+            else:
+                try:
+                    try:
+                        #  If the target is registered in this sector...
+                        target_client_info = database.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+
+                        _log.debug(
+                            "Target {:s} belongs to this sector. "
+                            "It is registered with client id {:d}, MAC {:s} at switch {:016X}, connected at port {:d}.".format(
+                                arp_layer.pdst,
+                                target_client_info["client_id"],
+                                target_client_info["mac"],
+                                target_client_info["datapath"],
+                                target_client_info["port"],
                             )
+                        )
+                        mac_target_str = target_client_info["mac"]
+                    except database.AddressNotRegistered:
+                        # The target is not registered in the sector.
+                        # Ask the central manager for the controller id and client id.
+                        # Then ask the respective controller for information about its client.
+                        address_info = central.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+                        _log.debug(
+                            "Target {:s} with client id {:d} belongs to controller {:s} sector.".format(
+                                arp_layer.pdst,
+                                address_info.client_id,
+                                address_info.controller_id
+                            )
+                        )
+                        mac_target_str = None
+
+
+                except central.NoResultsAvailable:
+                    _log.debug("Target {:s} is not registered at the central manager.".format(arp_layer.pdst))
+                    mac_target_str = None
+                # Checks for the existence of the target in the network. If it exists, send back the ARP Reply
+            if mac_target_str:
+                arp_response = Ether(src=str(mac_target_str), dst=pkt.src) \
+                    / ARP(
+                        hwtype=arp_layer.hwtype,
+                        ptype=arp_layer.ptype,
+                        hwlen=arp_layer.hwlen,
+                        plen=arp_layer.plen,
+                        op="is-at",
+                        hwsrc=mac_target_str.packed,
+                        psrc=str(ipv4_service),
+                        hwdst=EUI(pkt.src).packed,
+                        pdst=arp_layer.psrc
+                    )
                 datapath_obj.send_msg(
                     ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
@@ -929,61 +970,6 @@ def process_packet_in_event(packet_in_event):
                         data=bytes(arp_response)
                     )
                 )
-            else:  # If it is something else...
-                pass
-                # try:
-                #     source_client_id = database.Query_Client_ID(datapath_id=datapath_id, port_id=in_port, mac=EUI(pkt.src))
-                #     target_address_info = database.Query_Address_Information(ipv4=IPv4Address(arp_layer.pdst))
-                #
-                #     #_log.debug("address_info: {}".format(target_address_info))
-                #     source_entity = (cluster_network.Entity.HOST, source_client_id)
-                #     target_entity = (cluster_network.Entity.HOST, target_address_info["client_id"])
-                #
-                #     if not tunnels_manager.isPathActive(source_entity, target_entity):
-                #         shortest_path_source_to_target = cluster_network.QueryLocalPath(source_entity, target_entity)
-                #         _log.debug(
-                #             "shortest path from {} to {}: Hash: {} Path: {}".format(
-                #                 source_entity, target_entity, hash(shortest_path_source_to_target),
-                #                 shortest_path_source_to_target)
-                #         )
-                #         tunnels_manager.Activate_Local_Tunnel(shortest_path_source_to_target)
-                #
-                #     if not tunnels_manager.isPathActive(target_entity, source_entity):
-                #         shortest_path_target_to_source = cluster_network.QueryLocalPath(target_entity, source_entity)
-                #         _log.debug(
-                #             "shortest path from {} to {}: Hash: {} Path: {}".format(
-                #                 target_entity, source_entity, hash(shortest_path_target_to_source),
-                #                 shortest_path_target_to_source
-                #             )
-                #         )
-                #         tunnels_manager.Activate_Local_Tunnel(shortest_path_target_to_source)
-                #
-                #     arp_response = Ether(src=str(target_address_info["mac"]), dst=pkt.src) \
-                #                    / ARP(
-                #         hwtype=arp_layer.hwtype,
-                #         ptype=arp_layer.ptype,
-                #         hwlen=arp_layer.hwlen,
-                #         plen=arp_layer.plen,
-                #         op="is-at",
-                #         hwsrc=target_address_info["mac"].packed,
-                #         psrc=str(IPv4Address(arp_layer.pdst)),
-                #         hwdst=EUI(pkt.src).packed,
-                #         pdst=arp_layer.psrc
-                #     )
-                #     msg.datapath.send_msg(
-                #         ofp_parser.OFPPacketOut(
-                #             datapath=msg.datapath,
-                #             buffer_id=ofp.OFP_NO_BUFFER,
-                #             in_port=in_port,
-                #             actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
-                #             data=bytes(arp_response)
-                #         )
-                #     )
-                #
-                # except database.Exceptions.Address_Not_Registered:
-                #     central_proxy = get_central_proxy()
-                #     client_info = central_proxy.QueryClientInfo(ipv4=IPv4Address(arp_layer.pdst))
-                #     _log.debug("client_info: {}".format(client_info))
         #elif arp_layer.ptype == ETHER_TYPES["IPv6"]:  # Answering to ARPv6 Packet
         #    # TODO: implementar ARP reply com IPv6.
         #    pass
@@ -1020,6 +1006,8 @@ def process_packet_in_event(packet_in_event):
                     data=bytes(icmp_reply)
                 )
             )
+        else:  # Opens a bi-directional tunnel to target, using the same path in both directions.
+            pass
 
     elif pkt.haslayer(DNS):
         layer_num += 1
@@ -1028,9 +1016,7 @@ def process_packet_in_event(packet_in_event):
         dns_layer = pkt[DNS]
         DNSQR_layer = pkt[DNSQR]
 
-        _log.debug(
-            "Received DNS Packet - Summary: {:s}".format(dns_layer.mysummary())
-        )
+        _log.debug("Received DNS Packet - Summary: {:s}".format(dns_layer.mysummary()))
         qname_split = DNSQR_layer.qname.decode().split(".")[:-1]
         _log.debug(qname_split)
         if len(qname_split) == 3 and qname_split[-1] == "archsdn":
@@ -1080,6 +1066,61 @@ def process_packet_in_event(packet_in_event):
                     data=bytes(dns_reply)
                 )
             )
+    elif pkt.haslayer(IP): # If the packet is not DHCP, ARP, DNS or ICMP, then it is probably a regular data packet...
+        # In this case, it is necessary to identify the service and establish a communication path with the proper QoS
+        # try:
+        #     source_client_id = database.query_client_id(datapath_id=datapath_id, port_id=in_port, mac=EUI(pkt.src))
+        #     target_address_info = database.query_address_information(ipv4=IPv4Address(arp_layer.pdst))
+        #
+        #     # _log.debug("address_info: {}".format(target_address_info))
+        #     source_entity = (cluster_network.Entity.HOST, source_client_id)
+        #     target_entity = (cluster_network.Entity.HOST, target_address_info["client_id"])
+        #
+        #     if not tunnels_manager.isPathActive(source_entity, target_entity):
+        #         shortest_path_source_to_target = cluster_network.QueryLocalPath(source_entity, target_entity)
+        #         _log.debug(
+        #             "shortest path from {} to {}: Hash: {} Path: {}".format(
+        #                 source_entity, target_entity, hash(shortest_path_source_to_target),
+        #                 shortest_path_source_to_target)
+        #         )
+        #         tunnels_manager.Activate_Local_Tunnel(shortest_path_source_to_target)
+        #
+        #     if not tunnels_manager.isPathActive(target_entity, source_entity):
+        #         shortest_path_target_to_source = cluster_network.QueryLocalPath(target_entity, source_entity)
+        #         _log.debug(
+        #             "shortest path from {} to {}: Hash: {} Path: {}".format(
+        #                 target_entity, source_entity, hash(shortest_path_target_to_source),
+        #                 shortest_path_target_to_source
+        #             )
+        #         )
+        #         tunnels_manager.Activate_Local_Tunnel(shortest_path_target_to_source)
+        #
+        #     arp_response = Ether(src=str(target_address_info["mac"]), dst=pkt.src) \
+        #                    / ARP(
+        #         hwtype=arp_layer.hwtype,
+        #         ptype=arp_layer.ptype,
+        #         hwlen=arp_layer.hwlen,
+        #         plen=arp_layer.plen,
+        #         op="is-at",
+        #         hwsrc=target_address_info["mac"].packed,
+        #         psrc=str(IPv4Address(arp_layer.pdst)),
+        #         hwdst=EUI(pkt.src).packed,
+        #         pdst=arp_layer.psrc
+        #     )
+        #     msg.datapath.send_msg(
+        #         ofp_parser.OFPPacketOut(
+        #             datapath=msg.datapath,
+        #             buffer_id=ofp.OFP_NO_BUFFER,
+        #             in_port=in_port,
+        #             actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
+        #             data=bytes(arp_response)
+        #         )
+        #     )
+        #
+        # except database.Exceptions.Address_Not_Registered:
+        #     client_info = central.query_client_info(ipv4=IPv4Address(arp_layer.pdst))
+        #     _log.debug("client_info: {}".format(client_info))
+        pass
     else:
         layers = []
 
@@ -1092,8 +1133,6 @@ def process_packet_in_event(packet_in_event):
                 else:
                     break
                 counter += 1
-        _log.debug(
-            "Ignoring Received Packet:[{:s}]".format("][".join(layers))
-        )
+        _log.debug("Ignoring Received Packet. Don't know what to do with it. Layers: [{:s}]".format("][".join(layers)))
 
 
