@@ -81,3 +81,7 @@ class SwitchPortAlreadyConnected(LinkException):
 
 class PathNotFound(SectorException):
     pass
+
+
+class CannotCreateScenario(SectorException):
+    pass

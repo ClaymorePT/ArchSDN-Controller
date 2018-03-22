@@ -2,7 +2,7 @@ import logging
 from ipaddress import ip_address, IPv4Address
 import sys
 import struct
-import time
+from threading import Lock
 from uuid import UUID
 from ctypes import c_uint64, c_int64
 
@@ -28,6 +28,7 @@ __default_configs = None
 __implemented_flows = {}  # __implemented_flows[datapath_id][port_id] = [FlowMod]
 __datapath_beacons = {}  # __datapath_beacons[datapath_id] = Beacon_Task
 
+__cookies_lock = Lock()
 __recycled_cookie_ids = []
 __cookie_id_counter = 0
 __beacons_hash_table = {}  # __beacons_hash_table[hash] = (datapath_id, port_out)
@@ -36,31 +37,34 @@ __beacons_hash_table = {}  # __beacons_hash_table[hash] = (datapath_id, port_out
 def __alloc_cookie_id():
     global __cookie_id_counter
 
-    if __cookie_id_counter == 0xFFFFFFFFFFFFFFFF:
-        raise ValueError("No more cookies left...")
-    if len(__recycled_cookie_ids):
-        return __recycled_cookie_ids.pop()
-    __cookie_id_counter = __cookie_id_counter + 1
-    return __cookie_id_counter
+    with __cookies_lock:
+        if __cookie_id_counter == 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("No more cookies left...")
+        if len(__recycled_cookie_ids):
+            return __recycled_cookie_ids.pop()
+        __cookie_id_counter = __cookie_id_counter + 1
+        return __cookie_id_counter
 
 
 def __free_cookie_id(cookie_id):
     global __cookie_id_counter
-    if cookie_id <= 0:
-        raise ValueError("Cookies cannot be zero or negative.")
-    if cookie_id > __cookie_id_counter:
-        raise ValueError("That cookie was not allocated.")
-    if cookie_id in __recycled_cookie_ids:
-        raise ValueError("Cookie already free.")
-    __recycled_cookie_ids.append(cookie_id)
 
-    while len(__recycled_cookie_ids) > 0:
-        max_value = max(__recycled_cookie_ids)
-        if __cookie_id_counter == max_value:
-            __recycled_cookie_ids.remove(max_value)
-            __cookie_id_counter = __cookie_id_counter - 1
-        else:
-            break
+    with __cookies_lock:
+        if cookie_id <= 0:
+            raise ValueError("Cookies cannot be zero or negative.")
+        if cookie_id > __cookie_id_counter:
+            raise ValueError("That cookie was not allocated.")
+        if cookie_id in __recycled_cookie_ids:
+            raise ValueError("Cookie already free.")
+        __recycled_cookie_ids.append(cookie_id)
+
+        while len(__recycled_cookie_ids) > 0:
+            max_value = max(__recycled_cookie_ids)
+            if __cookie_id_counter == max_value:
+                __recycled_cookie_ids.remove(max_value)
+                __cookie_id_counter = __cookie_id_counter - 1
+            else:
+                break
 
 
 def __send_msg(*args, **kwargs):

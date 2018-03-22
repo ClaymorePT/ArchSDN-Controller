@@ -1,8 +1,9 @@
 import logging
-from threading import RLock
+from threading import RLock, Lock
 from enum import Enum, auto
 from functools import partial
 from abc import ABC, abstractmethod
+from math import pow
 
 import networkx as nx
 
@@ -13,7 +14,7 @@ from archsdn.engine.entities import \
 from archsdn.engine.exceptions import \
     EntityAlreadyRegistered, EntityNotRegistered, \
     LinkException, SwitchPortAlreadyConnected, PortNotUsed, PortNotRegistered, \
-    EntitiesAlreadyConnected, EntitiesNotConnected, PathNotFound
+    EntitiesAlreadyConnected, EntitiesNotConnected, PathNotFound, CannotCreateScenario
 
 __log = logging.getLogger(logger_module_name(__file__))
 
@@ -25,6 +26,43 @@ __suported_entities_str = ", ".join((str(i) for i in __suported_entities))
 
 __sector_initialized = False
 
+# MPLS reserved ids
+# https://tools.ietf.org/html/rfc7274
+# https://www.iana.org/assignments/mpls-label-values/mpls-label-values.xhtml
+__recycled_mpls_labels = []
+__mpls_label_id_counter = 16
+__mpls_lock = Lock()
+
+
+def __alloc_mpls_label_id():
+    global __mpls_label_id_counter
+    with __mpls_lock:
+        if __mpls_label_id_counter == 0x100000:
+            raise ValueError("No MPLS labels available.")
+        if len(__recycled_mpls_labels):
+            return __recycled_mpls_labels.pop()
+        __mpls_label_id_counter = __mpls_label_id_counter + 1
+        return __mpls_label_id_counter
+
+
+def __free_mpls_label_id(label_id):
+    global __mpls_label_id_counter
+    with __mpls_lock:
+        if label_id <= 16:
+            raise ValueError("Mpls label ID cannot be lower than 16")
+        if label_id > __mpls_label_id_counter or label_id in __recycled_mpls_labels:
+            raise ValueError("Label ID was not allocated.")
+
+        __recycled_mpls_labels.append(label_id)
+
+        while len(__recycled_mpls_labels) > 0:
+            max_value = max(__recycled_mpls_labels)
+            if __mpls_label_id_counter == max_value:
+                __recycled_mpls_labels.remove(max_value)
+                __mpls_label_id_counter = __mpls_label_id_counter - 1
+            else:
+                break
+
 
 class ScenarioType(Enum):
     ICMP_TUNNEL = auto()
@@ -33,13 +71,11 @@ class ScenarioType(Enum):
 
 class NetworkScenario(ABC):
     @property
-    @abstractmethod
-    def type(self):
-        pass
+    def id(self):
+        return id(self)
 
     @property
-    @abstractmethod
-    def path(self):
+    def type(self):
         pass
 
     @abstractmethod
@@ -51,8 +87,22 @@ class NetworkScenario(ABC):
         pass
 
 
-class __ImplementedScenario(NetworkScenario):
-    def __init__(self, scenario_type, path, edges, remove_scenario):
+class __MPLSTunnel(NetworkScenario):
+    @property
+    def path(self):
+        pass
+
+    @property
+    def entity_a_id(self):
+        pass
+
+    @property
+    def entity_b_id(self):
+        pass
+
+
+class __ICMPTunnel(__MPLSTunnel):
+    def __init__(self, scenario_type, path, edges, mpls_label_a, mpls_label_b, remove_scenario):
         assert isinstance(scenario_type, ScenarioType), "scenario_type expected to be {:s}. Got {:s}.".format(
             ScenarioType.__name__, str(type(scenario_type))
         )
@@ -63,7 +113,20 @@ class __ImplementedScenario(NetworkScenario):
         self.__type = scenario_type
         self.__path = path
         self.__edges = edges
+        self.__mpls_label_a = mpls_label_a
+        self.__mpls_label_b = mpls_label_b
         self.__remove_scenario = remove_scenario
+
+
+    def __del__(self):
+        # remove the bandwidth allocation from the sector, when this object is removed
+        self.__remove_scenario()
+
+    def __str__(self):
+        return "Network Scenario - Type {:s}; Path: [{:s}]".format(
+                    str(self.__type),
+                    "][".join(tuple((str(i) for i in self.__path)))
+                )
 
     @property
     def type(self):
@@ -72,6 +135,22 @@ class __ImplementedScenario(NetworkScenario):
     @property
     def path(self):
         return self.__path
+
+    @property
+    def entity_a(self):
+        return query_entity(self.__path[0])
+
+    @property
+    def entity_b(self):
+        return query_entity(self.__path[-1])
+
+    @property
+    def mpls_label_a(self):
+        return self.__mpls_label_a
+
+    @property
+    def mpls_label_b(self):
+        return self.__mpls_label_b
 
     def has_entity(self, entity_id):
         if entity_id == self.__path[0] or entity_id == self.__path[-1]:
@@ -85,6 +164,22 @@ class __ImplementedScenario(NetworkScenario):
     def has_edge(self, edge):
         return edge in self.__edges
 
+
+class __UnidirectionalTunnel(__MPLSTunnel):
+    def __init__(self, scenario_type, path, edges, mpls_label, remove_scenario):
+        assert isinstance(scenario_type, ScenarioType), "scenario_type expected to be {:s}. Got {:s}.".format(
+            ScenarioType.__name__, str(type(scenario_type))
+        )
+        assert isinstance(remove_scenario, partial), \
+            "unregister_scenario expected to be functools.partial object. Got {:s}".format(
+                str(type(remove_scenario))
+            )
+        self.__type = scenario_type
+        self.__path = path
+        self.__edges = edges
+        self.__mpls_label = mpls_label
+        self.__remove_scenario = remove_scenario
+
     def __del__(self):
         # remove the bandwidth allocation from the sector, when this object is removed
         self.__remove_scenario()
@@ -92,8 +187,39 @@ class __ImplementedScenario(NetworkScenario):
     def __str__(self):
         return "Network Scenario - Type {:s}; Path: [{:s}]".format(
                     str(self.__type),
-                    "][".join(tuple((str(i) for i in self.__path)))
-                )
+                    "][".join(tuple((str(i) for i in self.__path))))
+
+    @property
+    def type(self):
+        return self.__type
+
+    @property
+    def path(self):
+        return self.__path
+
+    @property
+    def entity_a(self):
+        return query_entity(self.__path[0])
+
+    @property
+    def entity_b(self):
+        return query_entity(self.__path[-1])
+
+    @property
+    def mpls_label(self):
+        return self.__mpls_label
+
+    def has_entity(self, entity_id):
+        if entity_id == self.__path[0] or entity_id == self.__path[-1]:
+            return True
+
+        for elem in self.__path[1:-1]:
+            if entity_id == elem[0]:
+                return True
+        return False
+
+    def has_edge(self, edge):
+        return edge in self.__edges
 
 
 def initialise():
@@ -185,6 +311,10 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
+            if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_port_no']) or \
+                    __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_port_no']) :
+                raise EntitiesAlreadyConnected()
+
             if len(
                     tuple(
                         filter(
@@ -235,6 +365,10 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                         kwargs['switch_b_port_no'], entity_b_id
                     )
                 )
+
+            if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_a_port_no']) or \
+                    __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_b_port_no']) :
+                raise EntitiesAlreadyConnected()
 
             if len(
                     tuple(
@@ -293,6 +427,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                         kwargs['switch_port_no'], entity_a_id
                     )
                 )
+
+            if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_port_no']) or \
+                    __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_port_no']) :
+                raise EntitiesAlreadyConnected()
+
             if len(
                     tuple(
                         filter(
@@ -492,17 +631,23 @@ def construct_scenario(
         with __lock:
             path = []  # Discovered Path
             edges = []  # Path graph edges used for reservation
+            network_scenario = None
+            allocated_mpls_labels = []
 
             if not is_entity_registered(origin_id) or not is_entity_registered(target_id):
                 raise EntityNotRegistered()
 
-            def remove_scenario():
-                with __lock:
-                    if allocated_bandwith:
-                        for (from_ent, to_ent, network_port) in edges:
-                            __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
 
             if scenario_type is ScenarioType.ICMP_TUNNEL:
+                # Alocate MPLS labels
+                try:
+                    allocated_mpls_labels.append(__alloc_mpls_label_id())
+                    allocated_mpls_labels.append(__alloc_mpls_label_id())
+                except ValueError:
+                    for label_id in allocated_mpls_labels:
+                        __free_mpls_label_id(label_id)
+                    raise CannotCreateScenario()
+
                 # Make a copy of the network graph
                 net_cpy = __net.copy()
 
@@ -582,7 +727,36 @@ def construct_scenario(
 
                     path.append(tail_id)
 
+                def remove_scenario():
+                    with __lock:
+                        for label_id in allocated_mpls_labels:
+                            __free_mpls_label_id(label_id)
+
+                        if allocated_bandwith:
+                            for (from_ent, to_ent, network_port) in edges:
+                                __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
+
+                network_scenario = __ICMPTunnel(
+                    scenario_type,
+                    path,
+                    edges,
+                    allocated_mpls_labels[0],
+                    allocated_mpls_labels[1],
+                    partial(
+                        remove_scenario
+                    )
+                )
+
+
             elif scenario_type is ScenarioType.UNIDIRECTIONAL_TUNNEL:
+                # Alocate MPLS labels
+                try:
+                    allocated_mpls_labels.append(__alloc_mpls_label_id())
+                except ValueError:
+                    for label_id in allocated_mpls_labels:
+                        __free_mpls_label_id(label_id)
+                    raise CannotCreateScenario()
+
                 # Make a copy of the network graph
                 net_cpy = __net.copy()
 
@@ -652,6 +826,34 @@ def construct_scenario(
                             __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
                     path.append(tail_id)
 
+                __log.debug(
+                    "Created Scenario Type {:s} for path {:s} for edges {:s} {:s}.".format(
+                        str(scenario_type),
+                        "][".join(tuple((str(i) for i in path))),
+                        "][".join(tuple((str(i) for i in edges))),
+                        "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
+                    )
+                )
+
+                def remove_scenario():
+                    with __lock:
+                        for label_id in allocated_mpls_labels:
+                            __free_mpls_label_id(label_id)
+
+                        if allocated_bandwith:
+                            for (from_ent, to_ent, network_port) in edges:
+                                __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
+
+                network_scenario = __UnidirectionalTunnel(
+                    scenario_type,
+                    path,
+                    edges,
+                    allocated_mpls_labels[0],
+                    partial(
+                        remove_scenario
+                    )
+                )
+
             __log.debug(
                 "Created Scenario Type {:s} for path {:s} for edges {:s} {:s}.".format(
                     str(scenario_type),
@@ -660,14 +862,8 @@ def construct_scenario(
                     "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
                 )
             )
-            network_scenario = __ImplementedScenario(
-                scenario_type,
-                path,
-                edges,
-                partial(
-                    remove_scenario
-                )
-            )
+            assert isinstance(network_scenario, NetworkScenario), \
+                "network_scenario is expected to be a Network Scenario. Got {:s}.".format(str(type(network_scenario)))
             return network_scenario
 
     except nx.exception.NetworkXNoPath:
