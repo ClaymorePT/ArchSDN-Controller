@@ -79,3 +79,5 @@ class SwitchPortAlreadyConnected(LinkException):
         return "Switch port {:d} already used.".format(self.__port_no)
 
 
+class PathNotFound(SectorException):
+    pass

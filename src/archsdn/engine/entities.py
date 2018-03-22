@@ -84,6 +84,7 @@ class Switch(Entity):
         self.__control_ip = control_ip
         self.__control_port = control_port
         self.__ports = {}
+        self.__of_version = of_version
 
     def __str__(self):
         return "<Switch type> object at address 0x{:x}: datapath_id= 0x{:016x}".format(
@@ -103,6 +104,10 @@ class Switch(Entity):
     @property
     def ports(self):
         return self.__ports
+
+    @property
+    def of_version(self):
+        return self.__of_version
 
     def register_port(
             self,

@@ -1,5 +1,8 @@
 import logging
 from threading import RLock
+from enum import Enum, auto
+from functools import partial
+from abc import ABC, abstractmethod
 
 import networkx as nx
 
@@ -10,7 +13,7 @@ from archsdn.engine.entities import \
 from archsdn.engine.exceptions import \
     EntityAlreadyRegistered, EntityNotRegistered, \
     LinkException, SwitchPortAlreadyConnected, PortNotUsed, PortNotRegistered, \
-    EntitiesAlreadyConnected, EntitiesNotConnected
+    EntitiesAlreadyConnected, EntitiesNotConnected, PathNotFound
 
 __log = logging.getLogger(logger_module_name(__file__))
 
@@ -21,6 +24,76 @@ __suported_entities = {Switch, Host, Sector}
 __suported_entities_str = ", ".join((str(i) for i in __suported_entities))
 
 __sector_initialized = False
+
+
+class ScenarioType(Enum):
+    ICMP_TUNNEL = auto()
+    UNIDIRECTIONAL_TUNNEL = auto()
+
+
+class NetworkScenario(ABC):
+    @property
+    @abstractmethod
+    def type(self):
+        pass
+
+    @property
+    @abstractmethod
+    def path(self):
+        pass
+
+    @abstractmethod
+    def has_entity(self, entity_id):
+        pass
+
+    @abstractmethod
+    def has_edge(self, edge):
+        pass
+
+
+class __ImplementedScenario(NetworkScenario):
+    def __init__(self, scenario_type, path, edges, remove_scenario):
+        assert isinstance(scenario_type, ScenarioType), "scenario_type expected to be {:s}. Got {:s}.".format(
+            ScenarioType.__name__, str(type(scenario_type))
+        )
+        assert isinstance(remove_scenario, partial), \
+            "unregister_scenario expected to be functools.partial object. Got {:s}".format(
+                str(type(remove_scenario))
+            )
+        self.__type = scenario_type
+        self.__path = path
+        self.__edges = edges
+        self.__remove_scenario = remove_scenario
+
+    @property
+    def type(self):
+        return self.__type
+
+    @property
+    def path(self):
+        return self.__path
+
+    def has_entity(self, entity_id):
+        if entity_id == self.__path[0] or entity_id == self.__path[-1]:
+            return True
+
+        for elem in self.__path[1:-1]:
+            if entity_id == elem[0]:
+                return True
+        return False
+
+    def has_edge(self, edge):
+        return edge in self.__edges
+
+    def __del__(self):
+        # remove the bandwidth allocation from the sector, when this object is removed
+        self.__remove_scenario()
+
+    def __str__(self):
+        return "Network Scenario - Type {:s}; Path: [{:s}]".format(
+                    str(self.__type),
+                    "][".join(tuple((str(i) for i in self.__path)))
+                )
 
 
 def initialise():
@@ -121,15 +194,21 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
             ):
                 raise SwitchPortAlreadyConnected(kwargs['switch_port_no'])
+            max_link_speed = entity_a.ports[kwargs['switch_port_no']]['max_speed']
 
             __net.add_edge(
                 entity_a_id, entity_b_id, kwargs['switch_port_no'],
-                data={}
+                data={
+                    'max_speed': max_link_speed,
+                    'available_speed': max_link_speed
+                }
             )
             __net.add_edge(
                 entity_b_id, entity_a_id, kwargs['switch_port_no'],
                 data={
-                    'source_mac': entity_b.mac
+                    'source_mac': entity_b.mac,
+                    'max_speed': max_link_speed,
+                    'available_speed': max_link_speed
                 }
             )
 
@@ -178,18 +257,25 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
             ):
                 raise SwitchPortAlreadyConnected(kwargs['switch_b_port_no'])
 
+            max_link_speed_a = entity_a.ports[kwargs['switch_a_port_no']]['max_speed']
+            max_link_speed_b = entity_b.ports[kwargs['switch_b_port_no']]['max_speed']
+
             __net.add_edge(
                 entity_a_id, entity_b_id, kwargs['switch_a_port_no'],
                 data={
                     'source_mac': entity_a.ports[kwargs['switch_a_port_no']]["hw_addr"],
-                    'destiny_mac': entity_b.ports[kwargs['switch_b_port_no']]["hw_addr"]
+                    'destiny_mac': entity_b.ports[kwargs['switch_b_port_no']]["hw_addr"],
+                    'max_speed': max_link_speed_a,
+                    'available_speed': max_link_speed_a
                 }
             )
             __net.add_edge(
                 entity_b_id, entity_a_id, kwargs['switch_b_port_no'],
                 data={
                     'source_mac': entity_b.ports[kwargs['switch_b_port_no']]["hw_addr"],
-                    'destiny_mac': entity_a.ports[kwargs['switch_a_port_no']]["hw_addr"]
+                    'destiny_mac': entity_a.ports[kwargs['switch_a_port_no']]["hw_addr"],
+                    'max_speed': max_link_speed_b,
+                    'available_speed': max_link_speed_b
                 }
             )
 
@@ -216,14 +302,21 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
             ):
                 raise SwitchPortAlreadyConnected(kwargs['switch_port_no'])
+            max_link_speed = entity_a.ports[kwargs['switch_a_port_no']]['max_speed']
 
             __net.add_edge(
                 entity_a_id, entity_b_id, kwargs['switch_port_no'],
-                data={}
+                data={
+                    'max_speed': max_link_speed,
+                    'available_speed': max_link_speed
+                }
             )
             __net.add_edge(
                 entity_b_id, entity_a_id, kwargs['switch_port_no'],
-                data={}
+                data={
+                    'max_speed': max_link_speed,
+                    'available_speed': max_link_speed
+                }
             )
 
         else:
@@ -375,3 +468,219 @@ def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
                     type(entity_b).__name__
                 )
             )
+
+
+def construct_scenario(
+        scenario_type,
+        origin_id,
+        target_id,
+        allocated_bandwith = None
+):
+    '''
+        Constructs the scenario specified by :param scenario_type.
+
+        :param scenario_type:
+        :param origin_id:
+        :param target_id:
+        :param allocated_bandwith:
+        :return:
+    '''
+    assert isinstance(scenario_type, ScenarioType), "scenario_type expected to be Scenario. Got {:s}".format(
+        type(scenario_type)
+    )
+    try:
+        with __lock:
+            path = []  # Discovered Path
+            edges = []  # Path graph edges used for reservation
+
+            if not is_entity_registered(origin_id) or not is_entity_registered(target_id):
+                raise EntityNotRegistered()
+
+            def remove_scenario():
+                with __lock:
+                    if allocated_bandwith:
+                        for (from_ent, to_ent, network_port) in edges:
+                            __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
+
+            if scenario_type is ScenarioType.ICMP_TUNNEL:
+                # Make a copy of the network graph
+                net_cpy = __net.copy()
+
+                # Remove edges that cannot fulfill the required bandwidth
+                if allocated_bandwith:
+                    for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
+                        if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
+                            net_cpy.remove_edge(node_a, node_b, port)
+
+                shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
+                assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
+                    len(shortest_path)
+                )
+
+                #  Create a path with ports, using the calculated shortest_path
+                #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
+                path = []
+                edges = []
+                if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
+                    head_id = shortest_path[0]
+                    tail_id = shortest_path[2]
+                    switch_id = shortest_path[1]
+                    port_in = max(
+                        (port for port in __net[switch_id][head_id]),
+                        key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
+                    )
+                    port_out = max(
+                        (port for port in __net[switch_id][tail_id]),
+                        key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                    )
+                    path.append(head_id)
+                    path.append((switch_id, port_in, port_out))
+                    path.append(tail_id)
+                    edges = [
+                        (switch_id, head_id, port_in),
+                        (head_id, switch_id, port_in),
+                        (switch_id, tail_id, port_out),
+                        (tail_id, switch_id, port_out),
+                    ]
+                    if allocated_bandwith:
+                        __net[switch_id][head_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                        __net[tail_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
+                    head_id = shortest_path[0]
+                    tail_id = shortest_path[-1]
+                    path.append(head_id)
+                    for i in range(1, len(shortest_path)-1):
+                        before_ent_id = shortest_path[i-1]
+                        after_ent_id = shortest_path[i+1]
+                        switch_id = shortest_path[i]
+                        port_in = max(
+                            (port for port in __net[switch_id][before_ent_id]),
+                            key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
+                        )
+                        port_out = max(
+                            (port for port in __net[switch_id][after_ent_id]),
+                            key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
+                        )
+                        path.append((switch_id, port_in, port_out))
+                        if before_ent_id == head_id:
+                            edges.append((before_ent_id, switch_id, port_in))
+                            if allocated_bandwith:
+                                __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        elif after_ent_id == tail_id:
+                            edges.append((after_ent_id, switch_id, port_out))
+                            if allocated_bandwith:
+                                __net[after_ent_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                        edges.append((switch_id, before_ent_id, port_in))
+                        edges.append((switch_id, after_ent_id, port_out))
+                        if allocated_bandwith:
+                            __net[switch_id][before_ent_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                            __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                    path.append(tail_id)
+
+            elif scenario_type is ScenarioType.UNIDIRECTIONAL_TUNNEL:
+                # Make a copy of the network graph
+                net_cpy = __net.copy()
+
+                # Remove edges that cannot fulfill the required bandwidth
+                if allocated_bandwith:
+                    for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
+                        if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
+                            net_cpy.remove_edge(node_a, node_b, port)
+
+                shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
+                assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
+                    len(shortest_path)
+                )
+
+                #  Create a path with ports, using the calculated shortest_path
+                #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
+                if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
+                    head_id = shortest_path[0]
+                    tail_id = shortest_path[2]
+                    switch_id = shortest_path[1]
+                    port_in = max(
+                        (port for port in __net[switch_id][head_id]),
+                        key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
+                    )
+                    port_out = max(
+                        (port for port in __net[switch_id][tail_id]),
+                        key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                    )
+                    path.append(head_id)
+                    path.append((switch_id, port_in, port_out))
+                    path.append(tail_id)
+                    edges = [
+                        (head_id, switch_id, port_in),
+                        (switch_id, tail_id, port_out),
+                    ]
+                    if allocated_bandwith:
+                        __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
+                    head_id = shortest_path[0]
+                    tail_id = shortest_path[-1]
+                    path.append(head_id)
+                    for i in range(1, len(shortest_path)-1):
+                        before_ent_id = shortest_path[i-1]
+                        after_ent_id = shortest_path[i+1]
+                        switch_id = shortest_path[i]
+                        port_in = max(
+                            (port for port in __net[switch_id][before_ent_id]),
+                            key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
+                        )
+                        port_out = max(
+                            (port for port in __net[switch_id][after_ent_id]),
+                            key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
+                        )
+                        if before_ent_id == head_id:
+                            edges.append((before_ent_id, switch_id, port_in))
+                            if allocated_bandwith:
+                                __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        elif after_ent_id == tail_id:
+                            edges.append((switch_id, after_ent_id, port_out))
+                            if allocated_bandwith:
+                                __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                        edges.append((switch_id, after_ent_id, port_out))
+                        if allocated_bandwith:
+                            __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                    path.append(tail_id)
+
+            __log.debug(
+                "Created Scenario Type {:s} for path {:s} for edges {:s} {:s}.".format(
+                    str(scenario_type),
+                    "][".join(tuple((str(i) for i in path))),
+                    "][".join(tuple((str(i) for i in edges))),
+                    "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
+                )
+            )
+            network_scenario = __ImplementedScenario(
+                scenario_type,
+                path,
+                edges,
+                partial(
+                    remove_scenario
+                )
+            )
+            return network_scenario
+
+    except nx.exception.NetworkXNoPath:
+        __log.warning(
+            "Type {:s} Path not found between entities {:s} and {:s}{:s}.".format(
+                str(scenario_type),
+                str(origin_id),
+                str(target_id),
+                " capable of accommodating {:d} for bandwidth reservation".format(
+                    allocated_bandwith
+                ) if allocated_bandwith else ""
+            )
+        )
+        raise PathNotFound()
+
+

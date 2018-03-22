@@ -84,8 +84,6 @@ def initialise(default_configs):
     __cookie_id_counter = 0
 
 
-
-
 def process_datapath_event(dp_event):
     assert __default_configs, "engine not initialised"
 
