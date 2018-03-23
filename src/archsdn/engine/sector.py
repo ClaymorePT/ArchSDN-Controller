@@ -3,7 +3,6 @@ from threading import RLock, Lock
 from enum import Enum, auto
 from functools import partial
 from abc import ABC, abstractmethod
-from math import pow
 
 import networkx as nx
 
@@ -37,7 +36,7 @@ __mpls_lock = Lock()
 def __alloc_mpls_label_id():
     global __mpls_label_id_counter
     with __mpls_lock:
-        if __mpls_label_id_counter == 0x100000:
+        if __mpls_label_id_counter == 0x100000:  # 0x100000 is the maximum label ID value
             raise ValueError("No MPLS labels available.")
         if len(__recycled_mpls_labels):
             return __recycled_mpls_labels.pop()
@@ -75,6 +74,7 @@ class NetworkScenario(ABC):
         return id(self)
 
     @property
+    @abstractmethod
     def type(self):
         pass
 
@@ -89,14 +89,17 @@ class NetworkScenario(ABC):
 
 class __MPLSTunnel(NetworkScenario):
     @property
+    @abstractmethod
     def path(self):
         pass
 
     @property
+    @abstractmethod
     def entity_a_id(self):
         pass
 
     @property
+    @abstractmethod
     def entity_b_id(self):
         pass
 
