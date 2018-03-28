@@ -23,7 +23,7 @@ class CreateTunnel(unittest.TestCase):
         )
         self.switch_1.register_port(
             port_no=1,
-            hw_addr=EUI('e0:d4:e8:6b:4d:f8'),
+            hw_addr=EUI('e0:00:00:00:01:01'),
             name=b'eth0'.decode('ascii'),
             config=entities.Switch.PORT_CONFIG(0),
             state=entities.Switch.PORT_STATE(4),
@@ -36,7 +36,7 @@ class CreateTunnel(unittest.TestCase):
         )
         self.switch_1.register_port(
             port_no=2,
-            hw_addr=EUI('e0:d4:e8:6b:4d:f9'),
+            hw_addr=EUI('e0:00:00:00:01:02'),
             name=b'eth1'.decode('ascii'),
             config=entities.Switch.PORT_CONFIG(0),
             state=entities.Switch.PORT_STATE(4),
@@ -55,7 +55,7 @@ class CreateTunnel(unittest.TestCase):
         )
         self.switch_2.register_port(
             port_no=1,
-            hw_addr=EUI('e0:d4:e8:6b:4d:f8'),
+            hw_addr=EUI('e0:00:00:00:02:01'),
             name=b'eth0'.decode('ascii'),
             config=entities.Switch.PORT_CONFIG(0),
             state=entities.Switch.PORT_STATE(4),
@@ -68,7 +68,39 @@ class CreateTunnel(unittest.TestCase):
         )
         self.switch_2.register_port(
             port_no=2,
-            hw_addr=EUI('e0:d4:e8:6b:4d:0d'),
+            hw_addr=EUI('e0:00:00:00:02:02'),
+            name=b'eth1'.decode('ascii'),
+            config=entities.Switch.PORT_CONFIG(0),
+            state=entities.Switch.PORT_STATE(4),
+            curr=entities.Switch.PORT_FEATURES(2056),
+            advertised=entities.Switch.PORT_FEATURES(0),
+            supported=entities.Switch.PORT_FEATURES(0),
+            peer=entities.Switch.PORT_FEATURES(0),
+            curr_speed=0,
+            max_speed=100
+        )
+        self.switch_3 = entities.Switch(
+            id=3,
+            control_ip=IPv4Address('192.168.123.3'),
+            control_port=6631,
+            of_version=ofproto_v1_3.OFP_VERSION
+        )
+        self.switch_3.register_port(
+            port_no=1,
+            hw_addr=EUI('e0:00:00:00:03:01'),
+            name=b'eth0'.decode('ascii'),
+            config=entities.Switch.PORT_CONFIG(0),
+            state=entities.Switch.PORT_STATE(4),
+            curr=entities.Switch.PORT_FEATURES(2056),
+            advertised=entities.Switch.PORT_FEATURES(0),
+            supported=entities.Switch.PORT_FEATURES(0),
+            peer=entities.Switch.PORT_FEATURES(0),
+            curr_speed=0,
+            max_speed=100
+        )
+        self.switch_3.register_port(
+            port_no=2,
+            hw_addr=EUI('e0:00:00:00:03:02'),
             name=b'eth1'.decode('ascii'),
             config=entities.Switch.PORT_CONFIG(0),
             state=entities.Switch.PORT_STATE(4),
@@ -93,6 +125,7 @@ class CreateTunnel(unittest.TestCase):
         )
         sector.register_entity(self.switch_1)
         sector.register_entity(self.switch_2)
+        sector.register_entity(self.switch_3)
         sector.register_entity(self.host_1)
         sector.register_entity(self.host_2)
 
@@ -119,6 +152,33 @@ class CreateTunnel(unittest.TestCase):
         self.assertTrue(scenario.has_edge((self.switch_2.id, self.switch_1.id, 2)))
 
         self.assertFalse(scenario.has_edge((self.host_1.id, self.switch_1.id, 2)))
+
+    def test_create_tunnel_with_bandwidth_5_elements(self):
+        sector.connect_entities(self.switch_1.id, self.host_1.id, switch_port_no=1)
+        sector.connect_entities(self.switch_1.id, self.switch_2.id, switch_a_port_no=2, switch_b_port_no=1)
+        sector.connect_entities(self.switch_2.id, self.switch_3.id, switch_a_port_no=2, switch_b_port_no=1)
+        sector.connect_entities(self.switch_3.id, self.host_2.id, switch_port_no=2)
+
+        scenario = sector.construct_scenario(
+            sector.ScenarioType.ICMP_TUNNEL,
+            self.host_1.id,
+            self.host_2.id,
+            100
+        )
+
+        self.assertTrue(isinstance(scenario, sector.NetworkScenario))
+        self.assertTrue(scenario.has_entity(self.host_1.id))
+        self.assertTrue(scenario.has_entity(self.host_2.id))
+        self.assertTrue(scenario.has_entity(self.switch_1.id))
+        self.assertTrue(scenario.has_entity(self.switch_2.id))
+        self.assertTrue(scenario.has_edge((self.host_1.id, self.switch_1.id, 1)))
+        self.assertTrue(scenario.has_edge((self.switch_1.id, self.host_1.id, 1)))
+        self.assertTrue(scenario.has_edge((self.switch_1.id, self.switch_2.id, 2)))
+        self.assertTrue(scenario.has_edge((self.switch_2.id, self.switch_1.id, 1)))
+        self.assertTrue(scenario.has_edge((self.switch_2.id, self.switch_3.id, 2)))
+        self.assertTrue(scenario.has_edge((self.switch_3.id, self.switch_2.id, 1)))
+        self.assertTrue(scenario.has_edge((self.host_2.id, self.switch_3.id, 2)))
+        self.assertTrue(scenario.has_edge((self.switch_3.id, self.host_2.id, 2)))
 
     def test_create_tunnel_with_bandwidth_delete_and_recreate(self):
         sector.connect_entities(self.switch_1.id, self.host_1.id, switch_port_no=1)

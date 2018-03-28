@@ -7,6 +7,7 @@ _ipv6_network = None
 _ipv4_service = None
 _ipv6_service = None
 _mac_service = None
+_service_reservation_policies = {}
 
 
 def update_volatile_information(
@@ -15,13 +16,15 @@ def update_volatile_information(
         ipv4_service = None,
         ipv6_service = None,
         mac_service  = None,
+        service_reservation_policies = None
 ):
-    global _ipv4_network, _ipv6_network, _ipv4_service, _ipv6_service, _mac_service
+    global _ipv4_network, _ipv6_network, _ipv4_service, _ipv6_service, _mac_service, _service_reservation_policies
     assert not (ipv4_network is None and
                 ipv6_network is None and
                 ipv4_service is None and
                 ipv6_service is None and
-                mac_service is None
+                mac_service is None and
+                service_reservation_policies is None
                 ), "No arguments have been passed."
 
     if ipv4_network:
@@ -34,6 +37,8 @@ def update_volatile_information(
         _ipv6_service = ipv6_service
     if mac_service:
         _mac_service = mac_service
+    if service_reservation_policies:
+        _service_reservation_policies = service_reservation_policies
 
 
 def query_volatile_info():
@@ -43,5 +48,6 @@ def query_volatile_info():
         'ipv4_service': IPv4Address(_ipv4_service),
         'ipv6_service': IPv6Address(_ipv6_service),
         'mac_service': EUI(_mac_service),
+        'service_reservation_policies': _service_reservation_policies
     }
 

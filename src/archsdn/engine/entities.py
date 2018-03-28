@@ -188,6 +188,14 @@ class Host(Entity):
         return self.__hostname
 
     @property
+    def hostname(self):
+        '''
+
+        :return:
+        '''
+        return self.__hostname
+
+    @property
     def mac(self):
         '''
 

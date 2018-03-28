@@ -480,13 +480,18 @@ class RPLCentralNetworkPolicies(ReplyMessage):
         Message used to reply the network policies configurations
     '''
 
-    def __init__(self, ipv4_network, ipv6_network, ipv4_service, ipv6_service, mac_service, registration_date):
+    def __init__(
+            self,
+            ipv4_network, ipv6_network, ipv4_service, ipv6_service, mac_service, registration_date,
+            service_reservation_policies
+    ):
         self.ipv4_network = ipv4_network
         self.ipv6_network = ipv6_network
         self.ipv4_service = ipv4_service
         self.ipv6_service = ipv6_service
         self.mac_service = mac_service
         self.registration_date = registration_date
+        self.service_reservation_policies = service_reservation_policies
 
     def __getstate__(self):
         return (
@@ -495,7 +500,8 @@ class RPLCentralNetworkPolicies(ReplyMessage):
             self.ipv4_service.packed,
             self.ipv6_service.packed,
             int(self.mac_service),
-            self.registration_date
+            self.registration_date,
+            self.service_reservation_policies
         )
 
     def __setstate__(self, state):
@@ -505,6 +511,7 @@ class RPLCentralNetworkPolicies(ReplyMessage):
         self.ipv6_service = IPv6Address(state[5])
         self.mac_service = EUI(state[6])
         self.registration_date = state[7]
+        self.service_reservation_policies = state[8]
 
 
 class RPLControllerInformation(ReplyMessage):

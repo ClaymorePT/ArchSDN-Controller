@@ -105,7 +105,7 @@ def query_address_info(ipv4=None, ipv6=None):
                 return {
                     "client_id": res[0],
                     "mac": EUI(int.from_bytes(res[1], "big")),
-                    "ipv4": IPv6Address(res[2]),
+                    "ipv4": IPv4Address(res[2]),
                     "datapath": res[3],
                     "port": res[4],
                     "registration_date": time.localtime(res[5]),

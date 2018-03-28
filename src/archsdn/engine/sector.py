@@ -95,12 +95,17 @@ class __MPLSTunnel(NetworkScenario):
 
     @property
     @abstractmethod
-    def entity_a_id(self):
+    def entity_a(self):
         pass
 
     @property
     @abstractmethod
-    def entity_b_id(self):
+    def entity_b(self):
+        pass
+
+    @property
+    @abstractmethod
+    def switches(self):
         pass
 
 
@@ -154,6 +159,10 @@ class __ICMPTunnel(__MPLSTunnel):
     @property
     def mpls_label_b(self):
         return self.__mpls_label_b
+
+    @property
+    def switches(self):
+        return tuple((query_entity(switch_info[0]) for switch_info in self.__path[1:-1]))
 
     def has_entity(self, entity_id):
         if entity_id == self.__path[0] or entity_id == self.__path[-1]:
@@ -314,6 +323,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
+            __log.debug(
+                "Attempting to connect Switch {:s} with Host {:s} through port {:d}".format(
+                    str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
+                )
+            )
             if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_port_no']) or \
                     __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_port_no']) :
                 raise EntitiesAlreadyConnected()
@@ -329,12 +343,22 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 raise SwitchPortAlreadyConnected(kwargs['switch_port_no'])
             max_link_speed = entity_a.ports[kwargs['switch_port_no']]['max_speed']
 
+            __log.debug(
+                "Creating link from Switch {:s} to Host {:s} using port {:d}".format(
+                    str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
+                )
+            )
             __net.add_edge(
                 entity_a_id, entity_b_id, kwargs['switch_port_no'],
                 data={
                     'max_speed': max_link_speed,
                     'available_speed': max_link_speed
                 }
+            )
+            __log.debug(
+                "Creating link from Host {:s} to Switch {:s} using port {:d}".format(
+                    str(entity_b_id), str(entity_a_id), kwargs['switch_port_no']
+                )
             )
             __net.add_edge(
                 entity_b_id, entity_a_id, kwargs['switch_port_no'],
@@ -343,6 +367,9 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'max_speed': max_link_speed,
                     'available_speed': max_link_speed
                 }
+            )
+            __log.debug(
+                "Switch {:s} is now connected to Host {:s}".format(str(entity_a_id), str(entity_b_id))
             )
 
         # 2nd Case - (Switch, Switch)
@@ -369,6 +396,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
+            __log.debug(
+                "Attempting to connect Switch {:s} with Switch {:s} using ports {:d} and {:d}".format(
+                    str(entity_a_id), str(entity_b_id), kwargs['switch_a_port_no'], kwargs['switch_b_port_no']
+                )
+            )
             if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_a_port_no']) or \
                     __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_b_port_no']) :
                 raise EntitiesAlreadyConnected()
@@ -397,6 +429,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
             max_link_speed_a = entity_a.ports[kwargs['switch_a_port_no']]['max_speed']
             max_link_speed_b = entity_b.ports[kwargs['switch_b_port_no']]['max_speed']
 
+            __log.debug(
+                "Creating link from Switch {:s} to Switch {:s} using port {:d}".format(
+                    str(entity_a_id), str(entity_b_id), kwargs['switch_a_port_no']
+                )
+            )
             __net.add_edge(
                 entity_a_id, entity_b_id, kwargs['switch_a_port_no'],
                 data={
@@ -406,6 +443,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'available_speed': max_link_speed_a
                 }
             )
+            __log.debug(
+                "Creating link from Switch {:s} to Switch {:s} using port {:d}".format(
+                    str(entity_b_id), str(entity_a_id), kwargs['switch_b_port_no']
+                )
+            )
             __net.add_edge(
                 entity_b_id, entity_a_id, kwargs['switch_b_port_no'],
                 data={
@@ -414,6 +456,9 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'max_speed': max_link_speed_b,
                     'available_speed': max_link_speed_b
                 }
+            )
+            __log.debug(
+                "Switch {:s} is now connected to Switch {:s}".format(str(entity_a_id), str(entity_b_id))
             )
 
         # 3rd Case - (Switch, Sector)
@@ -431,6 +476,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
+            __log.debug(
+                "Attempting to connect Switch {:s} with Sector {:s} through port {:d}.".format(
+                    str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
+                )
+            )
             if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_port_no']) or \
                     __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_port_no']) :
                 raise EntitiesAlreadyConnected()
@@ -444,8 +494,13 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
             ):
                 raise SwitchPortAlreadyConnected(kwargs['switch_port_no'])
-            max_link_speed = entity_a.ports[kwargs['switch_a_port_no']]['max_speed']
+            max_link_speed = entity_a.ports[kwargs['switch_port_no']]['max_speed']
 
+            __log.debug(
+                "Creating link from Switch {:s} to Sector {:s} using port {:d}".format(
+                    str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
+                )
+            )
             __net.add_edge(
                 entity_a_id, entity_b_id, kwargs['switch_port_no'],
                 data={
@@ -453,12 +508,21 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'available_speed': max_link_speed
                 }
             )
+
+            __log.debug(
+                "Creating link from Sector {:s} to Switch {:s} using port {:d}".format(
+                    str(entity_b_id), str(entity_a_id), kwargs['switch_port_no']
+                )
+            )
             __net.add_edge(
                 entity_b_id, entity_a_id, kwargs['switch_port_no'],
                 data={
                     'max_speed': max_link_speed,
                     'available_speed': max_link_speed
                 }
+            )
+            __log.debug(
+                "Switch {:s} is now connected to Sector {:s}".format(str(entity_a_id), str(entity_b_id))
             )
 
         else:
@@ -516,7 +580,7 @@ def is_port_connected(switch_id, port_id):
             raise PortNotRegistered()
 
         for entity_id in __net[switch_id]:
-            if port_id in __net[switch_id][entity_id]:
+            if __net.has_edge(switch_id, entity_id, port_id):
                 return True
 
         return False
@@ -653,6 +717,7 @@ def construct_scenario(
 
                 # Make a copy of the network graph
                 net_cpy = __net.copy()
+                #__log.debug("Network copy:\n  {:s}".format("\n  ".join(tuple((str(edge) for edge in net_cpy.edges(data=True))))))
 
                 # Remove edges that cannot fulfill the required bandwidth
                 if allocated_bandwith:
