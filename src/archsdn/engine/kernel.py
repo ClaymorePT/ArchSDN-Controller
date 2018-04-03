@@ -2,7 +2,6 @@ import logging
 from ipaddress import ip_address, IPv4Address
 import sys
 import struct
-from threading import Lock
 from uuid import UUID
 from ctypes import c_uint64
 
@@ -13,7 +12,7 @@ from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.layers.dns import DNSRR, DNS, DNSQR
 
 from ryu.lib import hub
-from ryu.ofproto import ether,inet
+from ryu.ofproto import ether
 from netaddr import EUI
 
 from archsdn.helpers import logger_module_name, custom_logging_callback
@@ -25,13 +24,40 @@ from archsdn.engine import entities
 
 _log = logging.getLogger(logger_module_name(__file__))
 __default_configs = None
-__implemented_flows = {}  # __implemented_flows[datapath_id][port_id] = [FlowMod]
-__datapath_beacons = {}  # __datapath_beacons[datapath_id] = Beacon_Task
 
-__cookies_lock = Lock()
+
+#
+# Topology Discovery Beacons
+#
+# The following globals are used for the sector topology discovery
+#  __topology_beacons -> Active topology beacons
+#  __beacons_hash_table -> Encoded Hash table
+#
+__topology_beacons = {}  # __topology_beacons[switch id] = Beacon_Task
+__beacons_hash_table = {}  # __beacons_hash_table[hash] = (switch id, port_out)
+
+
+#
+# Cookie IDs generator
+#
+# The following globals are used to maintain unique and ready-to-use cookie ids.
+#
+# __recycled_cookie_ids -> A list of previously used cookie ids, which can be recycled
+# __cookie_id_counter -> cookie ID counter
+#
 __recycled_cookie_ids = []
 __cookie_id_counter = 0
-__beacons_hash_table = {}  # __beacons_hash_table[hash] = (datapath_id, port_out)
+
+
+#
+# Active Flows
+#
+# This global is a dictionary and keeps a record of the activated flows in the sector.
+#   The dictionary keys are the cookie_id's of each activated flow, and it indexes the flow and the switch ID where the
+#   flow is activated.
+#
+__active_flows = {}  # __active_flows[cookie id] = (flow, switch id)
+
 
 #
 # MPLS Tunnels Information
@@ -79,8 +105,8 @@ __active_sector_tunnels = {}  # __active_sector_tunnels[tunnel_id] = Tunnel Scen
 __mapped_services = {}  # __mapped_services[switch_id]["Service"]["service details"] = (tunnel_id or port_out)
 # __mapped_services[switch_id] = {
 #  "ICMP4" -> __mapped_services[switch_id]["ICMP4"][(src_ip, dst_ip)] = (tunnel_id, port_out, cookies)
-#  "IPv4" ->  __mapped_services[switch_id]["IP4"][(src_ip, dst_ip)][(src_port, dst_port)] = (tunnel_id, port_out)
-#  "MPLS" ->  __mapped_services[switch_id]["MPLS"][port][label_id] = (tunnel_id, port_out)
+#  "IPv4" ->  __mapped_services[switch_id]["IP4"][(src_ip, dst_ip)][(src_port, dst_port)] = (tunnel_id, port_out, cookies)
+#  "MPLS" ->  __mapped_services[switch_id]["MPLS"][port][label_id] = (tunnel_id, port_out, cookies)
 # }
 
 
@@ -95,45 +121,39 @@ __BASE_SERVICE_PRIORITY = 0x8000+2
 __SERVICE_FLOW_PRIORITY = 0x8000+3
 
 
-
 def __alloc_cookie_id():
     global __cookie_id_counter
 
-    with __cookies_lock:
-        if __cookie_id_counter == 0xFFFFFFFFFFFFFFFF:
-            raise ValueError("No more cookies left...")
-        if len(__recycled_cookie_ids):
-            cookie_id = __recycled_cookie_ids.pop()
-            _log.debug("Cookie ID {:d} was acquired.".format(cookie_id))
-            return cookie_id
-        __cookie_id_counter = __cookie_id_counter + 1
-        _log.debug("Cookie ID {:d} was acquired.".format(__cookie_id_counter))
-        return __cookie_id_counter
+    if __cookie_id_counter == 0xFFFFFFFFFFFFFFFF:
+        raise ValueError("No more cookies left...")
+    if len(__recycled_cookie_ids):
+        cookie_id = __recycled_cookie_ids.pop()
+        _log.debug("Cookie ID {:d} was acquired.".format(cookie_id))
+        return cookie_id
+    __cookie_id_counter = __cookie_id_counter + 1
+    _log.debug("Cookie ID {:d} was acquired.".format(__cookie_id_counter))
+    return __cookie_id_counter
 
 
 def __free_cookie_id(cookie_id):
     global __cookie_id_counter
 
-    with __cookies_lock:
-        if cookie_id <= 0:
-            raise ValueError("Cookies cannot be zero or negative.")
-        if cookie_id > __cookie_id_counter:
-            raise ValueError("That cookie was not allocated.")
-        if cookie_id in __recycled_cookie_ids:
-            raise ValueError("Cookie already free.")
-        __recycled_cookie_ids.append(cookie_id)
+    if cookie_id <= 0:
+        raise ValueError("Cookies cannot be zero or negative.")
+    if cookie_id > __cookie_id_counter:
+        raise ValueError("That cookie was not allocated.")
+    if cookie_id in __recycled_cookie_ids:
+        raise ValueError("Cookie already free.")
+    __recycled_cookie_ids.append(cookie_id)
 
-        while len(__recycled_cookie_ids) > 0:
-            max_value = max(__recycled_cookie_ids)
-            if __cookie_id_counter == max_value:
-                __recycled_cookie_ids.remove(max_value)
-                __cookie_id_counter = __cookie_id_counter - 1
-            else:
-                break
-        _log.debug("Cookie ID {:d} was released.".format(cookie_id))
-
-
-
+    while len(__recycled_cookie_ids) > 0:
+        max_value = max(__recycled_cookie_ids)
+        if __cookie_id_counter == max_value:
+            __recycled_cookie_ids.remove(max_value)
+            __cookie_id_counter = __cookie_id_counter - 1
+        else:
+            break
+    _log.debug("Cookie ID {:d} was released.".format(cookie_id))
 
 
 def __send_msg(*args, **kwargs):
@@ -145,13 +165,13 @@ def __get_datapath(*args, **kwargs):
 
 
 def initialise(default_configs):
-    global __default_configs, __implemented_flows, __datapath_beacons
+    global __default_configs, __active_flows, __topology_beacons
     global __cookie_id_counter, __recycled_cookie_ids
     sector.initialise()
 
     __default_configs = default_configs
-    __implemented_flows = {}
-    __datapath_beacons = {}
+    __active_flows = {}
+    __topology_beacons = {}
 
     __recycled_cookie_ids = []
     __cookie_id_counter = 0
@@ -168,13 +188,6 @@ def process_datapath_event(dp_event):
     ofp = datapath_obj.ofproto
     controller_uuid = database.get_database_info()["uuid"]
     central_policies_addresses = database.query_volatile_info()
-    # {
-    #     'ipv4_network': IPv4Network(_ipv4_network),
-    #     'ipv6_network': IPv6Network(_ipv6_network),
-    #     'ipv4_service': IPv4Address(_ipv4_service),
-    #     'ipv6_service': IPv6Address(_ipv6_service),
-    #     : EUI(_mac_service),
-    # }
 
     if dp_event.enter:
         ipv4_info = None
@@ -257,6 +270,13 @@ def process_datapath_event(dp_event):
         if sector.is_entity_registered(datapath_id):
             sector.remove_entity(datapath_id)
 
+        #  Prepare __mapped_services to receive service activations
+        __mapped_services[datapath_id] = {
+            "ICMP4": {},
+            "IPv4": {},
+            "MPLS": {},
+        }
+
         switch = entities.Switch(
             id=datapath_id,
             control_ip=ipv4_info[0] if ipv4_info else ipv6_info[0] if ipv6_info else None,
@@ -280,8 +300,6 @@ def process_datapath_event(dp_event):
             )
         sector.register_entity(switch)
         database.register_datapath(datapath_id=datapath_id, ipv4_info=ipv4_info, ipv6_info=ipv6_info)
-
-        __implemented_flows[datapath_id] = {}
 
         #
         # Reset Switch state and initialize bootstrap sequence
@@ -344,9 +362,6 @@ def process_datapath_event(dp_event):
         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
         for port in dp_event.ports:
-            __implemented_flows[datapath_id][port.port_no] = []
-
-        for port in dp_event.ports:
             if not (port.state & ofp.OFPPS_LINK_DOWN):
                 boot_dhcp = ofp_parser.OFPFlowMod(
                     datapath=datapath_obj,
@@ -375,10 +390,8 @@ def process_datapath_event(dp_event):
                         )
                     ]
                 )
-
                 datapath_obj.send_msg(boot_dhcp)
-                __implemented_flows[datapath_id][port.port_no].append(boot_dhcp)
-
+                __active_flows[boot_dhcp.cookie] = (boot_dhcp, datapath_obj.id)
 
                 archsdn_beacon = ofp_parser.OFPFlowMod(
                     datapath=datapath_obj,
@@ -403,9 +416,8 @@ def process_datapath_event(dp_event):
                         )
                     ]
                 )
-
                 datapath_obj.send_msg(archsdn_beacon)
-                __implemented_flows[datapath_id][port.port_no].append(archsdn_beacon)
+                __active_flows[archsdn_beacon.cookie] = (archsdn_beacon, datapath_obj.id)
 
                 mpls_packets = ofp_parser.OFPFlowMod(
                     datapath=datapath_obj,
@@ -423,9 +435,8 @@ def process_datapath_event(dp_event):
                     match=ofp_parser.OFPMatch(in_port=port.port_no, eth_type=ether.ETH_TYPE_MPLS),
                     instructions=[ofp_parser.OFPInstructionGotoTable(table_id=__MPLS_OF_TABLE_NUM)]
                 )
-
                 datapath_obj.send_msg(mpls_packets)
-                __implemented_flows[datapath_id][port.port_no].append(mpls_packets)
+                __active_flows[mpls_packets.cookie] = (mpls_packets, datapath_obj.id)
 
         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
@@ -442,24 +453,51 @@ def process_datapath_event(dp_event):
             )
         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
-        if datapath_id in __datapath_beacons:
+        if datapath_id in __topology_beacons:
             _log.warning("A beacon was already active for switch {:016X}. Canceling.".format(datapath_id))
-            __datapath_beacons[datapath_id].cancel()
-        __datapath_beacons[datapath_id] = hub.spawn(__send_discovery_beacon)
+            __topology_beacons[datapath_id].cancel()
+        __topology_beacons[datapath_id] = hub.spawn(__send_discovery_beacon)
         _log.info("Switch Connect Event: {:s}".format(str(dp_event.__dict__)))
 
     else:
         if sector.is_entity_registered(datapath_id):
             ## Query scenarios which use this switch and initiate process establish new paths.
-            if datapath_id in __datapath_beacons:
-                __datapath_beacons[datapath_id].cancel()
+            if datapath_id in __topology_beacons:
+                __topology_beacons[datapath_id].cancel()
 
             sector.remove_entity(datapath_id)
             database.remove_datapath(datapath_id)
-            for port_no in __implemented_flows[datapath_id]:
-                for flow in __implemented_flows[datapath_id][port_no]:
-                    __free_cookie_id(flow.cookie)
-            del __implemented_flows[datapath_id]
+
+            flows_to_remove = []
+            if datapath_id in __mapped_services:
+                switch_mapped_services = __mapped_services[datapath_id]
+                for source_target in switch_mapped_services["ICMP4"]:
+                    (tunnel_id, _, cookies) = switch_mapped_services["ICMP4"][source_target]
+                    assert tunnel_id in __active_sector_tunnels, \
+                        "tunnel_id {:d} not in __active_sector_tunnels".format(tunnel_id)
+                    del __active_sector_tunnels[tunnel_id]
+                    flows_to_remove = flows_to_remove + cookies
+
+                for source_target in switch_mapped_services["IP4"]:
+                    (tunnel_id, _, cookies) = switch_mapped_services["IP4"][source_target]
+                    assert tunnel_id in __active_sector_tunnels, \
+                        "tunnel_id {:d} not in __active_sector_tunnels".format(tunnel_id)
+                    del __active_sector_tunnels[tunnel_id]
+                    flows_to_remove = flows_to_remove + cookies
+
+                for port_no in switch_mapped_services["MPLS"]:
+                    for label_id in switch_mapped_services["MPLS"][port_no]:
+                        (tunnel_id, _, cookies) = switch_mapped_services["IP4"][port_no][label_id]
+                        assert tunnel_id in __active_sector_tunnels, \
+                            "tunnel_id {:d} not in __active_sector_tunnels".format(tunnel_id)
+                        del __active_sector_tunnels[tunnel_id]
+                        flows_to_remove = flows_to_remove + cookies
+
+            for cookie_id in flows_to_remove:
+                assert cookie_id in __active_flows, "cookie_id {:d} not in __active_flows".format(cookie_id)
+                del __active_flows[cookie_id]
+
+            del __mapped_services[datapath_id]
 
             _log.info("Switch Disconnect Event: {:s}".format(str(dp_event.__dict__)))
         else:
@@ -579,10 +617,16 @@ def process_port_change_event(port_change_event):
                 if entities.Switch.PORT_STATE.OFPPS_LINK_DOWN in new_state:
                     # Port is down. Detect which scenarios are affected, take them down,
                     #   send advertisements if necessary and try to rebuild the scenarios
+                    def flow_filter(elem):
+                        (flow, switch_id) = elem
+                        if switch_id != datapath_id:
+                            return False
+                        if flow.match:
+                            for match_field in flow.match.fields:
+                                    return type(match_field) is ofp_parser.MTInPort and match_field.value == port_no
+                    filtered_flows = tuple(filter(flow_filter, __active_flows.items()))
 
-                    flows_list = __implemented_flows[datapath_id][port_no]
-                    while len(flows_list):
-                        flow = flows_list.pop()
+                    for (flow, _) in filtered_flows:
                         datapath_obj.send_msg(  # Removes all flows registered in this switch.
                             ofp_parser.OFPFlowMod(
                                 datapath=datapath_obj,
@@ -606,7 +650,9 @@ def process_port_change_event(port_change_event):
                                 flow.cookie, port_no, datapath_id
                             )
                         )
+                        del __active_flows[flow.cookie]
                         __free_cookie_id(flow.cookie)
+
                     __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
                 elif entities.Switch.PORT_STATE.OFPPS_LIVE in new_state:
@@ -640,7 +686,7 @@ def process_port_change_event(port_change_event):
                         ]
                     )
                     datapath_obj.send_msg(boot_dhcp)
-                    __implemented_flows[datapath_id][port_no].append(boot_dhcp)
+                    __active_flows[boot_dhcp.cookie] = (boot_dhcp, datapath_obj.id)
 
                     archsdn_beacon = ofp_parser.OFPFlowMod(
                         datapath=datapath_obj,
@@ -667,7 +713,7 @@ def process_port_change_event(port_change_event):
                     )
 
                     datapath_obj.send_msg(archsdn_beacon)
-                    __implemented_flows[datapath_id][port_no].append(archsdn_beacon)
+                    __active_flows[archsdn_beacon.cookie] = (archsdn_beacon, datapath_obj.id)
 
                     mpls_packets = ofp_parser.OFPFlowMod(
                         datapath=datapath_obj,
@@ -687,7 +733,7 @@ def process_port_change_event(port_change_event):
                     )
 
                     datapath_obj.send_msg(mpls_packets)
-                    __implemented_flows[datapath_id][port_no].append(mpls_packets)
+                    __active_flows[mpls_packets.cookie] = (mpls_packets, datapath_obj.id)
                     __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
                     _log.warning(
                         "Default flows have been configured at Switch {:016X} for port {:d}".format(
@@ -722,7 +768,7 @@ def process_packet_in_event(packet_in_event):
     mac_service = central_policies_addresses["mac_service"]
 
     # Identify and characterise packet (deep packet inspection to detect service or request)
-    # Identify origin (in_port, mac source, IP source)
+    # Identify origin (pkt_in_port, mac source, IP source)
     # {
     #     'timestamp': 1520870994.4223557,
     #     'msg': OFPPacketIn(
@@ -730,7 +776,7 @@ def process_packet_in_event(packet_in_event):
     #         cookie=2,
     #         data=b'\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00',
     #         match=OFPMatch(
-    #             oxm_fields={'in_port': 1}
+    #             oxm_fields={'pkt_in_port': 1}
     #         ),
     #         reason=1,
     #         table_id=0,
@@ -744,17 +790,17 @@ def process_packet_in_event(packet_in_event):
     #   'msg_type': 10,
     #   'msg_len': 102,
     #   'xid': 0,
-    #   'buf': b'\x04\n\x00f\x00\x00\x00\x00\xff\xff\xff\xff\x00<\x01\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x01\x00\x0c\x80\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'buffer_id': 4294967295, 'total_len': 60, 'reason': 1, 'table_id': 0, 'cookie': 4, 'match': OFPMatch(oxm_fields={'in_port': 1}), 'data': b'\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    #   'buf': b'\x04\n\x00f\x00\x00\x00\x00\xff\xff\xff\xff\x00<\x01\x00\x00\x00\x00\x00\x00\x00\x00\x04\x00\x01\x00\x0c\x80\x00\x00\x04\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00', 'buffer_id': 4294967295, 'total_len': 60, 'reason': 1, 'table_id': 0, 'cookie': 4, 'match': OFPMatch(oxm_fields={'pkt_in_port': 1}), 'data': b'\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff\xff\xff\xaa\xaa\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00p\xb3\xd5l\xd8\xeb\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
     # }
 
-    in_port = None
+    pkt_in_port = None
     #in_port_mac = None
 
     if msg.match:
         for match_field in msg.match.fields:
             if type(match_field) is ofp_parser.MTInPort:
-                in_port = match_field.value
-                #in_port_mac = msg.datapath.ports[in_port].hw_addr
+                pkt_in_port = match_field.value
+                #in_port_mac = msg.datapath.ports[pkt_in_port].hw_addr
 
     pkt = Ether(msg.data)
     pkt_src_mac = EUI(pkt.src)
@@ -763,7 +809,7 @@ def process_packet_in_event(packet_in_event):
     _log.debug(
         "Packet-In received at controller by switch {:016X} at port {:d} "
         "and sent by host {:s} to {:s} with type 0x{:04x}".format(
-            datapath_id, in_port, str(pkt_src_mac), str(pkt_dst_mac), pkt_ethertype
+            datapath_id, pkt_in_port, str(pkt_src_mac), str(pkt_dst_mac), pkt_ethertype
         )
     )
 
@@ -811,10 +857,10 @@ def process_packet_in_event(packet_in_event):
                             controller_id=sender_controller_uuid
                         )
                     )
-                if not sector.is_port_connected(datapath_id, in_port):
+                if not sector.is_port_connected(datapath_id, pkt_in_port):
                     sector.connect_entities(
                         datapath_id, sender_controller_uuid,
-                        switch_port_no=in_port
+                        switch_port_no=pkt_in_port
                     )
 
             else:
@@ -826,10 +872,10 @@ def process_packet_in_event(packet_in_event):
                     )
                 )
 
-                if not sector.is_port_connected(datapath_id, in_port):
+                if not sector.is_port_connected(datapath_id, pkt_in_port):
                     sector.connect_entities(
                         datapath_id, sender_datapath_id,
-                        switch_a_port_no=in_port,
+                        switch_a_port_no=pkt_in_port,
                         switch_b_port_no=sender_port_out
                     )
 
@@ -906,8 +952,8 @@ def process_packet_in_event(packet_in_event):
                     ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
                         buffer_id=ofp.OFP_NO_BUFFER,
-                        in_port=in_port,
-                        actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
+                        in_port=pkt_in_port,
+                        actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(arp_response))],
                         data=bytes(arp_response)
                     )
                 )
@@ -922,7 +968,7 @@ def process_packet_in_event(packet_in_event):
         pkt_ipv4_dst = IPv4Address(ip_layer.dst)
         _log.debug(
             "Received IP packet from host with MAC {:s}, Source IP {:s} to Destiny IP {:s}, on switch {:016X} at port {:d}".format(
-                pkt.src, str(pkt_ipv4_src), str(pkt_ipv4_dst), datapath_id, in_port
+                pkt.src, str(pkt_ipv4_src), str(pkt_ipv4_dst), datapath_id, pkt_in_port
             )
         )
 
@@ -937,26 +983,26 @@ def process_packet_in_event(packet_in_event):
 
                     _log.debug(
                         "Received DHCP Discover packet from host with MAC {:s} on switch {:016X} at port {:d}".format(
-                            pkt.src, datapath_id, in_port
+                            pkt.src, datapath_id, pkt_in_port
                         )
                     )
 
                     try:  # search for a registration for the host at the local database
                         host_database_id = database.query_client_id(
                             datapath_id=datapath_id,
-                            port_id=in_port,
+                            port_id=pkt_in_port,
                             mac=pkt_src_mac
                         )
 
                     except database.ClientNotRegistered:  # If not found, register a new host
                         database.register_client(
                             datapath_id=datapath_id,
-                            port_id=in_port,
+                            port_id=pkt_in_port,
                             mac=pkt_src_mac
                         )
                         host_database_id = database.query_client_id(
                             datapath_id=datapath_id,
-                            port_id=in_port,
+                            port_id=pkt_in_port,
                             mac=pkt_src_mac
                         )
                         try:  # Query central manager for the centralized host information
@@ -978,15 +1024,15 @@ def process_packet_in_event(packet_in_event):
                             ipv6=host_ipv6
                         )
 
-                        if sector.is_port_connected(switch_id=datapath_id, port_id=in_port):
-                            old_entity_id = sector.query_connected_entity_id(switch_id=datapath_id, port_id=in_port)
+                        if sector.is_port_connected(switch_id=datapath_id, port_id=pkt_in_port):
+                            old_entity_id = sector.query_connected_entity_id(switch_id=datapath_id, port_id=pkt_in_port)
                             old_entity = sector.query_entity(old_entity_id)
 
                             assert isinstance(old_entity, entities.Host), "entity expected to be Host. Got {:s}".format(
                                 repr(old_entity)
                             )
                             if old_entity.mac != pkt_src_mac:
-                                sector.disconnect_entities(datapath_id, old_entity_id, in_port)
+                                sector.disconnect_entities(datapath_id, old_entity_id, pkt_in_port)
 
                         new_host = entities.Host(
                             hostname=host_name,
@@ -995,7 +1041,7 @@ def process_packet_in_event(packet_in_event):
                             ipv6=host_ipv6
                         )
                         sector.register_entity(new_host)
-                        sector.connect_entities(datapath_id, new_host.id, switch_port_no=in_port)
+                        sector.connect_entities(datapath_id, new_host.id, switch_port_no=pkt_in_port)
 
                     # It is necessary to check if the host is already registered at the controller database
                     client_info = database.query_client_info(host_database_id)
@@ -1033,8 +1079,8 @@ def process_packet_in_event(packet_in_event):
                         ofp_parser.OFPPacketOut(
                             datapath=msg.datapath,
                             buffer_id=ofp.OFP_NO_BUFFER,
-                            in_port=in_port,
-                            actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_offer))],
+                            in_port=pkt_in_port,
+                            actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_offer))],
                             data=bytes(dhcp_offer)
                         )
                     )
@@ -1044,18 +1090,18 @@ def process_packet_in_event(packet_in_event):
                     try:
                         _log.debug(
                             "Received DHCP Request packet from host with MAC {:s} on switch {:016X} at port {:d}".format(
-                                pkt.src, datapath_id, in_port
+                                pkt.src, datapath_id, pkt_in_port
                             )
                         )
 
                         # It is necessary to check if the host is already registered at the controller database
-                        client_id = database.query_client_id(datapath_id, in_port, EUI(pkt.src))
+                        client_id = database.query_client_id(datapath_id, pkt_in_port, EUI(pkt.src))
                         client_info = database.query_client_info(client_id)
                         client_ipv4 = client_info["ipv4"]
 
                         # Activate a flow to redirect to the controller ARP Request packets sent from the host to the
-                        #   controller, from in_port.
-                        msg = ofp_parser.OFPFlowMod(
+                        #   controller, from pkt_in_port.
+                        arp_flow = ofp_parser.OFPFlowMod(
                             datapath=msg.datapath,
                             cookie=__alloc_cookie_id(),
                             cookie_mask=0,
@@ -1069,7 +1115,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=in_port, eth_dst='ff:ff:ff:ff:ff:ff', eth_src=pkt.src, eth_type=0x0806,
+                                in_port=pkt_in_port, eth_dst='ff:ff:ff:ff:ff:ff', eth_src=pkt.src, eth_type=0x0806,
                                 arp_op=1, arp_spa=str(client_ipv4), arp_tpa=(str(ipv4_service), 0xFFFFFFFF),
                                 arp_sha=pkt.src, arp_tha='00:00:00:00:00:00'
                             ),
@@ -1085,12 +1131,12 @@ def process_packet_in_event(packet_in_event):
                                 )
                             ]
                         )
-                        datapath_obj.send_msg(msg)
-                        __implemented_flows[datapath_id][in_port].append(msg)
+                        datapath_obj.send_msg(arp_flow)
+                        __active_flows[arp_flow.cookie] = (arp_flow, datapath_obj.id)
 
                         # Activate a flow to redirect to the controller ICMP Request packets sent from the host to the
-                        #   controller, from in_port.
-                        msg = ofp_parser.OFPFlowMod(
+                        #   controller, from pkt_in_port.
+                        icmp_flow = ofp_parser.OFPFlowMod(
                             datapath=msg.datapath,
                             cookie=__alloc_cookie_id(),
                             cookie_mask=0,
@@ -1104,7 +1150,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=in_port, eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
+                                in_port=pkt_in_port, eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
                                 ipv4_src=str(client_ipv4),
                                 ip_proto=1,
                                 #icmpv4_type=8, icmpv4_code=0
@@ -1121,14 +1167,14 @@ def process_packet_in_event(packet_in_event):
                                 )
                             ]
                         )
-                        datapath_obj.send_msg(msg)
-                        __implemented_flows[datapath_id][in_port].append(msg)
+                        datapath_obj.send_msg(icmp_flow)
+                        __active_flows[icmp_flow.cookie] = (icmp_flow, datapath_obj.id)
 
                         # Activate a flow to redirect to the controller DNS packets sent from the host to the
-                        #   controller, from in_port.
-                        msg = ofp_parser.OFPFlowMod(
+                        #   controller, from pkt_in_port.
+                        dns_flow = ofp_parser.OFPFlowMod(
                             datapath=msg.datapath,
-                            cookie=0,
+                            cookie=__alloc_cookie_id(),
                             cookie_mask=0,
                             table_id=__SERVICE_OF_TABLE_NUM,
                             command=ofp.OFPFC_ADD,
@@ -1140,7 +1186,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
+                                in_port=pkt_in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
                                 ipv4_src=str(client_ipv4), ipv4_dst=str(ipv4_service), ip_proto=17, udp_dst=53
                             ),
                             instructions=[
@@ -1154,9 +1200,9 @@ def process_packet_in_event(packet_in_event):
                                 )
                             ]
                         )
-                        datapath_obj.send_msg(msg)
-                        __implemented_flows[datapath_id][in_port].append(msg)
-                        __send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+                        datapath_obj.send_msg(dns_flow)
+                        __active_flows[dns_flow.cookie] = (dns_flow, datapath_obj.id)
+                        __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
                         #  Sending DHCP Ack to host
                         dhcp_ack = Ether(src=str(mac_service), dst=pkt.src) \
@@ -1184,8 +1230,8 @@ def process_packet_in_event(packet_in_event):
                             ofp_parser.OFPPacketOut(
                                 datapath=msg.datapath,
                                 buffer_id=ofp.OFP_NO_BUFFER,
-                                in_port=in_port,
-                                actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_ack))],
+                                in_port=pkt_in_port,
+                                actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_ack))],
                                 data=bytes(dhcp_ack)
                             )
                         )
@@ -1212,8 +1258,8 @@ def process_packet_in_event(packet_in_event):
                             ofp_parser.OFPPacketOut(
                                 datapath=msg.datapath,
                                 buffer_id=ofp.OFP_NO_BUFFER,
-                                in_port=in_port,
-                                actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dhcp_nak))],  #
+                                in_port=pkt_in_port,
+                                actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_nak))],  #
                                 data=bytes(dhcp_nak)
                             )
                         )
@@ -1240,8 +1286,8 @@ def process_packet_in_event(packet_in_event):
                     ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
                         buffer_id=ofp.OFP_NO_BUFFER,
-                        in_port=in_port,
-                        actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(icmp_reply))],
+                        in_port=pkt_in_port,
+                        actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
                         data=bytes(icmp_reply)
                     )
                 )
@@ -1252,11 +1298,10 @@ def process_packet_in_event(packet_in_event):
                     addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
                     target_switch_id = addr_info_dst["datapath"]
                     target_switch_port = addr_info_dst["port"]
-                    source_entity_id = sector.query_connected_entity_id(datapath_id, in_port)
+                    source_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
                     target_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
                     source_entity = sector.query_entity(source_entity_id)
                     target_entity = sector.query_entity(target_entity_id)
-                    tunnel_flows = {}
 
                     for tunnel_id in __active_sector_tunnels:
                         tunnel = __active_sector_tunnels[tunnel_id]
@@ -1269,20 +1314,17 @@ def process_packet_in_event(packet_in_event):
                             )
                             return
 
-
                     icmp_tunnel_scenario = sector.construct_scenario(
                         sector.ScenarioType.ICMP_TUNNEL,
                         source_entity_id,
                         target_entity_id,
-                        # 100
+                        # 100 TODO: This is not working because Zodiac FX do not seem to have queues...
                     )
                     if len(icmp_tunnel_scenario.path) == 3:
                         raise Exception("Not yet implemented : len(icmp_tunnel_scenario.path) == 3:")
 
                     else:
-                        for (switch_id, _, _) in icmp_tunnel_scenario.path[1:-1]:
-                            tunnel_flows[switch_id] = []
-
+                        tunnel_cookies = []
                         a_to_b_mpls_label = icmp_tunnel_scenario.mpls_label_a
                         b_to_a_mpls_label = icmp_tunnel_scenario.mpls_label_b
 
@@ -1291,7 +1333,7 @@ def process_packet_in_event(packet_in_event):
                         #  Edges switches are those who perform the ingress and egress packet operations.
                         #
                         #  Tunnel implementation at path core switches
-                        for (switch_id, in_port, out_port) in icmp_tunnel_scenario.path[2:-2]:
+                        for (switch_id, switch_in_port, switch_out_port) in icmp_tunnel_scenario.path[2:-2]:
                             datapath_obj = __get_datapath(switch_id)
                             mpls_flow_mod = ofp_parser.OFPFlowMod(
                                 datapath=datapath_obj,
@@ -1307,7 +1349,7 @@ def process_packet_in_event(packet_in_event):
                                 out_group=ofp.OFPG_ANY,
                                 flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                                 match=ofp_parser.OFPMatch(
-                                    in_port=in_port,
+                                    in_port=switch_in_port,
                                     eth_type=ether.ETH_TYPE_MPLS,
                                     mpls_label=a_to_b_mpls_label
                                 ),
@@ -1315,13 +1357,14 @@ def process_packet_in_event(packet_in_event):
                                     ofp_parser.OFPInstructionActions(
                                         ofp.OFPIT_APPLY_ACTIONS,
                                         [
-                                            ofp_parser.OFPActionOutput(port=out_port)
+                                            ofp_parser.OFPActionOutput(port=switch_out_port)
                                         ]
                                     )
                                 ]
                             )
                             datapath_obj.send_msg(mpls_flow_mod)
-                            tunnel_flows[switch_id].append((in_port, mpls_flow_mod))
+                            tunnel_cookies.append(mpls_flow_mod.cookie)
+                            __active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, datapath_obj.id)
 
                             mpls_flow_mod = ofp_parser.OFPFlowMod(
                                 datapath=datapath_obj,
@@ -1337,7 +1380,7 @@ def process_packet_in_event(packet_in_event):
                                 out_group=ofp.OFPG_ANY,
                                 flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                                 match=ofp_parser.OFPMatch(
-                                    in_port=out_port,
+                                    in_port=switch_out_port,
                                     eth_type=ether.ETH_TYPE_MPLS,
                                     mpls_label=b_to_a_mpls_label
                                 ),
@@ -1345,15 +1388,16 @@ def process_packet_in_event(packet_in_event):
                                     ofp_parser.OFPInstructionActions(
                                         ofp.OFPIT_APPLY_ACTIONS,
                                         [
-                                            ofp_parser.OFPActionOutput(port=in_port)
+                                            ofp_parser.OFPActionOutput(port=switch_in_port)
                                         ]
                                     )
                                 ]
                             )
                             datapath_obj.send_msg(mpls_flow_mod)
-                            tunnel_flows[switch_id].append((in_port, mpls_flow_mod))
-                            __send_msg(ofp_parser.OFPBarrierRequest(
-                                datapath_obj),
+                            tunnel_cookies.append(mpls_flow_mod.cookie)
+                            __active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, datapath_obj.id)
+                            __send_msg(
+                                ofp_parser.OFPBarrierRequest(datapath_obj),
                                 reply_cls=ofp_parser.OFPBarrierReply
                             )
                         ###############################
@@ -1361,7 +1405,7 @@ def process_packet_in_event(packet_in_event):
                         #
                         # Side A configuration
                         # Ingressing from Side A to tunnel
-                        (switch_id, in_port, out_port) = icmp_tunnel_scenario.path[1]
+                        (switch_id, switch_in_port, switch_out_port) = icmp_tunnel_scenario.path[1]
                         datapath_obj = __get_datapath(switch_id)
                         ingress_side_a_tunnel_flow = ofp_parser.OFPFlowMod(
                             datapath=datapath_obj,
@@ -1377,7 +1421,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=in_port,
+                                in_port=switch_in_port,
                                 eth_src=str(source_entity.mac), eth_dst=str(target_entity.mac),
                                 eth_type=ether.ETH_TYPE_IP,
                                 ipv4_src=str(source_entity.ipv4), ipv4_dst=str(target_entity.ipv4), ip_proto=1
@@ -1388,13 +1432,14 @@ def process_packet_in_event(packet_in_event):
                                     [
                                         ofp_parser.OFPActionPushMpls(),
                                         ofp_parser.OFPActionSetField(mpls_label=a_to_b_mpls_label),
-                                        ofp_parser.OFPActionOutput(port=out_port),
+                                        ofp_parser.OFPActionOutput(port=switch_out_port),
                                     ]
                                 ),
                             ]
                         )
                         datapath_obj.send_msg(ingress_side_a_tunnel_flow)
-                        tunnel_flows[switch_id].append((in_port, ingress_side_a_tunnel_flow))
+                        tunnel_cookies.append(ingress_side_a_tunnel_flow.cookie)
+                        __active_flows[ingress_side_a_tunnel_flow.cookie] = (ingress_side_a_tunnel_flow, datapath_obj.id)
                         ###############################
 
                         # Egress from tunnel to Side A
@@ -1412,7 +1457,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=out_port,
+                                in_port=switch_out_port,
                                 eth_type=ether.ETH_TYPE_MPLS,
                                 mpls_label=b_to_a_mpls_label
                             ),
@@ -1421,15 +1466,18 @@ def process_packet_in_event(packet_in_event):
                                     ofp.OFPIT_APPLY_ACTIONS,
                                     [
                                         ofp_parser.OFPActionPopMpls(),
-                                        ofp_parser.OFPActionOutput(port=in_port)
+                                        ofp_parser.OFPActionOutput(port=switch_in_port)
                                     ]
                                 )
                             ]
                         )
                         datapath_obj.send_msg(egress_side_a_tunnel_flow)
-                        tunnel_flows[switch_id].append((in_port, egress_side_a_tunnel_flow))
-                        __send_msg(ofp_parser.OFPBarrierRequest(
-                            datapath_obj),
+                        tunnel_cookies.append(egress_side_a_tunnel_flow.cookie)
+                        __active_flows[egress_side_a_tunnel_flow.cookie] = (
+                            egress_side_a_tunnel_flow, datapath_obj.id
+                        )
+                        __send_msg(
+                            ofp_parser.OFPBarrierRequest(datapath_obj),
                             reply_cls=ofp_parser.OFPBarrierReply
                         )
                         ###############################
@@ -1437,7 +1485,7 @@ def process_packet_in_event(packet_in_event):
                         #
                         # Side B configuration
                         # Ingressing from Side B to tunnel
-                        (switch_id, in_port, out_port) = icmp_tunnel_scenario.path[-2]
+                        (switch_id, switch_in_port, switch_out_port) = icmp_tunnel_scenario.path[-2]
                         datapath_obj = __get_datapath(switch_id)
                         ingress_side_b_tunnel_flow = ofp_parser.OFPFlowMod(
                             datapath=datapath_obj,
@@ -1453,7 +1501,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=out_port,
+                                in_port=switch_out_port,
                                 eth_src=str(target_entity.mac), eth_dst=str(source_entity.mac),
                                 eth_type=ether.ETH_TYPE_IP,
                                 ipv4_src=str(target_entity.ipv4), ipv4_dst=str(source_entity.ipv4), ip_proto=1
@@ -1464,13 +1512,16 @@ def process_packet_in_event(packet_in_event):
                                     [
                                         ofp_parser.OFPActionPushMpls(),
                                         ofp_parser.OFPActionSetField(mpls_label=b_to_a_mpls_label),
-                                        ofp_parser.OFPActionOutput(port=in_port)
+                                        ofp_parser.OFPActionOutput(port=switch_in_port)
                                     ]
                                 ),
                             ]
                         )
                         datapath_obj.send_msg(ingress_side_b_tunnel_flow)
-                        tunnel_flows[switch_id].append((in_port, ingress_side_b_tunnel_flow))
+                        tunnel_cookies.append(ingress_side_b_tunnel_flow.cookie)
+                        __active_flows[ingress_side_b_tunnel_flow.cookie] = (
+                            ingress_side_b_tunnel_flow, datapath_obj.id
+                        )
                         ###############################
 
                         # Egress from tunnel to Side B
@@ -1488,7 +1539,7 @@ def process_packet_in_event(packet_in_event):
                             out_group=ofp.OFPG_ANY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
-                                in_port=in_port,
+                                in_port=switch_in_port,
                                 eth_type=ether.ETH_TYPE_MPLS,
                                 mpls_label=a_to_b_mpls_label
                             ),
@@ -1497,41 +1548,46 @@ def process_packet_in_event(packet_in_event):
                                     ofp.OFPIT_APPLY_ACTIONS,
                                     [
                                         ofp_parser.OFPActionPopMpls(),
-                                        ofp_parser.OFPActionOutput(port=out_port)
+                                        ofp_parser.OFPActionOutput(port=switch_out_port)
                                     ]
                                 )
                             ]
                         )
                         datapath_obj.send_msg(egress_side_b_tunnel_flow)
-                        tunnel_flows[switch_id].append((in_port, egress_side_b_tunnel_flow))
-                        __send_msg(ofp_parser.OFPBarrierRequest(
-                            datapath_obj),
+                        tunnel_cookies.append(egress_side_b_tunnel_flow.cookie)
+                        __active_flows[egress_side_b_tunnel_flow.cookie] = (
+                            egress_side_b_tunnel_flow, datapath_obj.id
+                        )
+                        __send_msg(
+                            ofp_parser.OFPBarrierRequest(datapath_obj),
                             reply_cls=ofp_parser.OFPBarrierReply
                         )
                         ###############################
 
-                        tunnel_cookies = []
-                        for switch_id in tunnel_flows:
-                            for (in_port, flow) in tunnel_flows[switch_id]:
-                                __implemented_flows[switch_id][in_port].append(flow)
-                                tunnel_cookies.append(flow.cookie)
+                        # Registering the allocated service for one way...
+                        __mapped_services[switch_id]["ICMP4"][(source_entity.ipv4, target_entity.ipv4)] = (
+                            id(icmp_tunnel_scenario), None, tunnel_cookies
+                        )
+                        # ...and registering for the other way.
+                        __mapped_services[switch_id]["ICMP4"][(target_entity.ipv4, source_entity.ipv4)] = (
+                            id(icmp_tunnel_scenario), None, tunnel_cookies
+                        )
 
-
-                            if switch_id not in __mapped_services:
-                                __mapped_services[switch_id] = {
-                                    "ICMP4": {},
-                                    "IPv4": {},
-                                    "MPLS": {},
-                                }
-                            __mapped_services[switch_id]["ICMP4"][(source_entity.ipv4, target_entity.ipv4)] = (
-                                id(icmp_tunnel_scenario), None, tunnel_cookies
-                            )
-                            __mapped_services[switch_id]["ICMP4"][(target_entity.ipv4, source_entity.ipv4)] = (
-                                id(icmp_tunnel_scenario), None, tunnel_cookies
-                            )
-
-                        # Keep the scenario object alive, otherwise the bandwidth reservation is removed
+                        # Keep the scenario object alive, otherwise the bandwidth reservation is removed.
                         __active_sector_tunnels[id(icmp_tunnel_scenario)] = icmp_tunnel_scenario
+
+                        # Reinsert the ICMP packet into the OpenFlow Pipeline, in order to properly process it.
+                        msg.datapath.send_msg(
+                            ofp_parser.OFPPacketOut(
+                                datapath=msg.datapath,
+                                buffer_id=ofp.OFP_NO_BUFFER,
+                                in_port=pkt_in_port,
+                                actions=[
+                                    ofp_parser.OFPActionOutput(port=ofp.OFPP_TABLE, max_len=len(msg.data)),
+                                ],
+                                data=msg.data
+                            )
+                        )
 
                         _log.warning(
                             "ICMP4 tunnel opened between hosts {:s} and {:s}.".format(
@@ -1545,7 +1601,9 @@ def process_packet_in_event(packet_in_event):
                 if host_not_found_in_sector:
                     try:
                         addr_info = central.query_address_info(ipv4=pkt_ipv4_dst)
-                        raise AssertionError("Support for hosts in other sectors, is Not implemented.")
+                        raise AssertionError(
+                            "Support for hosts in other sectors, is Not implemented {}.".format(str(addr_info))
+                        )
 
                     except central.NoResultsAvailable:
                         _log.error("Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
@@ -1554,6 +1612,7 @@ def process_packet_in_event(packet_in_event):
                 _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
 
         elif pkt.haslayer(DNS):
+            datapath_obj = msg.datapath
             udp_layer = pkt[UDP]
             dns_layer = pkt[DNS]
             DNSQR_layer = pkt[DNSQR]
@@ -1603,8 +1662,8 @@ def process_packet_in_event(packet_in_event):
                     ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
                         buffer_id=ofp.OFP_NO_BUFFER,
-                        in_port=in_port,
-                        actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(dns_reply))],
+                        in_port=pkt_in_port,
+                        actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dns_reply))],
                         data=bytes(dns_reply)
                     )
                 )
@@ -1613,7 +1672,7 @@ def process_packet_in_event(packet_in_event):
             # If the packet is not DHCP, ARP, DNS or ICMP, then it is probably a regular data packet...
             # In this case, it is necessary to identify the service and establish a communication path with the proper QoS
             # try:
-            #     source_client_id = database.query_client_id(datapath_id=datapath_id, port_id=in_port, mac=EUI(pkt.src))
+            #     source_client_id = database.query_client_id(datapath_id=datapath_id, port_id=pkt_in_port, mac=EUI(pkt.src))
             #     target_address_info = database.query_address_information(ipv4=IPv4Address(arp_layer.pdst))
             #
             #     # _log.debug("address_info: {}".format(target_address_info))
@@ -1655,8 +1714,8 @@ def process_packet_in_event(packet_in_event):
             #         ofp_parser.OFPPacketOut(
             #             datapath=msg.datapath,
             #             buffer_id=ofp.OFP_NO_BUFFER,
-            #             in_port=in_port,
-            #             actions=[ofp_parser.OFPActionOutput(port=in_port, max_len=len(arp_response))],
+            #             pkt_in_port=pkt_in_port,
+            #             actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(arp_response))],
             #             data=bytes(arp_response)
             #         )
             #     )
