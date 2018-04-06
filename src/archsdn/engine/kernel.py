@@ -91,6 +91,8 @@
         -> Table 1:
            - IP ports (DNS/DHCP/other applications) -> 4000
            - TCP/UDP/ICMP/other IP protocols -> 3000
+             - ICMP with specific destination -> 3500
+             - ICMP with network destination -> 3250
            - ARP/IPv4/IPv6 -> 2000
            - VLAN ID -> 1000
 
@@ -136,15 +138,16 @@
       - Table 2,3 and 4 have no default flows, except for the Table-Miss flow.
 
     The Table-Miss flow is used to match every packet and discard it (OFPIT_CLEAR_ACTIONS).
-      It matches all fields (ofp_parser.OFPMatch()) and has the lowest priority value (0).
-
-      ofp_parser.OFPInstructionActions(ofp.OFPIT_CLEAR_ACTIONS, [])
+      It matches all fields (ofp_parser.OFPMatch()) and has the lowest priority value (0). Table-Miss flow always uses
+      a cookie value equal to zero.
 
 
     <-- Activated flows when a host is registered -->
     When a host is registered by the controller, the controller inserts the port segregation flow into Table 0.
       - This flow indicates the presence of a host at a specific port. All packets sent by the host should be processed
         by Table 1.
+      - The port segregation flow, matches the port_in value and the packet source MAC address. The packet will only be
+        sent to Table 1 if both fields match.
 
 
     <-- Activated flows when a new link to a local switch is discovered and registered -->
@@ -187,28 +190,39 @@ __SECTOR_FILTERING_TABLE = 2
 __MPLS_FILTERING_TABLE = 3
 __FOREIGN_HOST_FILTERING_TABLE = 4
 
+__ARCHSDN_TABLES = {
+    __PORT_SEGREGATION_TABLE,
+    __HOST_FILTERING_TABLE,
+    __SECTOR_FILTERING_TABLE,
+    __MPLS_FILTERING_TABLE,
+    __FOREIGN_HOST_FILTERING_TABLE
+}
 
 # Flows priority values
 __TABLE_0_PORT_PRIORITY = 2000
 __TABLE_0_DISCOVERY_PRIORITY = 1000
 
-__TABLE_1_LAYER_5 = 4000
-__TABLE_1_LAYER_4 = 3000
-__TABLE_1_LAYER_3 = 2000
-__TABLE_1_VLAN = 1000
+__TABLE_1_LAYER_5_PRIORITY = 4000
+__TABLE_1_LAYER_4_SPECIFIC_PRIORITY = 3500
+__TABLE_1_LAYER_4_NETWORK_PRIORITY = 3250
+__TABLE_1_LAYER_4_PRIORITY = 3000
+__TABLE_1_LAYER_3_PRIORITY = 2000
+__TABLE_1_VLAN_PRIORITY = 1000
 
-__TABLE_2_MPLS_SWITCH = 3000
-__TABLE_2_MPLS_POP = 2000
-__TABLE_2_MPLS_CHANGE = 1000
+__TABLE_2_MPLS_SWITCH_PRIORITY = 3000
+__TABLE_2_MPLS_POP_PRIORITY = 2000
+__TABLE_2_MPLS_CHANGE_PRIORITY = 1000
 
-__TABLE_3_MPLS_SWITCH = 3000
-__TABLE_3_MPLS_POP = 2000
-__TABLE_3_MPLS_CHANGE = 1000
+__TABLE_3_MPLS_SWITCH_PRIORITY = 3000
+__TABLE_3_MPLS_POP_PRIORITY = 2000
+__TABLE_3_MPLS_CHANGE_PRIORITY = 1000
 
-__TABLE_4_LAYER_5 = 4000
-__TABLE_4_LAYER_4 = 3000
-__TABLE_4_LAYER_3 = 2000
-__TABLE_4_VLAN = 1000
+__TABLE_4_LAYER_5_PRIORITY = 4000
+__TABLE_4_LAYER_4_PRIORITY = 3000
+__TABLE_4_LAYER_3_PRIORITY = 2000
+__TABLE_4_VLAN_PRIORITY = 1000
+
+__TABLE_MISS_PRIORITY = 0
 
 
 
@@ -385,6 +399,9 @@ def process_datapath_event(dp_event):
     ofp = datapath_obj.ofproto
     controller_uuid = database.get_database_info()["uuid"]
     central_policies_addresses = database.query_volatile_info()
+    ipv4_network = central_policies_addresses["ipv4_network"]
+    ipv4_service = central_policies_addresses["ipv4_service"]
+    mac_service = central_policies_addresses["mac_service"]
 
     if dp_event.enter: # If Switch is connecting...
         ipv4_info = None
@@ -524,19 +541,12 @@ def process_datapath_event(dp_event):
         datapath_obj.send_msg(  # Removes all flows registered in this switch.
             ofp_parser.OFPFlowMod(
                 datapath=datapath_obj,
-                cookie=0,
-                cookie_mask=0xFFFFFFFFFFFFFFFF,
                 table_id=ofp.OFPTT_ALL,
                 command=ofp.OFPFC_DELETE,
-                idle_timeout=0,
-                hard_timeout=0,
-                priority=__BASE_SERVICE_PRIORITY,
                 buffer_id=ofp.OFP_NO_BUFFER,
                 out_port=ofp.OFPP_ANY,
                 out_group=ofp.OFPG_ANY,
-                flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                match=None,
-                instructions=None
+                flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP
             )
         )
 
@@ -558,85 +568,198 @@ def process_datapath_event(dp_event):
         )
         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
-        for port in dp_event.ports:
-            if not (port.state & ofp.OFPPS_LINK_DOWN):
-                boot_dhcp = ofp_parser.OFPFlowMod(
+
+        # Stage 2 -> Configure Tables with default flows.
+
+        # Inserting Table-Miss flows for all tables
+        for table_no in __ARCHSDN_TABLES:
+            datapath_obj.send_msg(
+                ofp_parser.OFPFlowMod(
                     datapath=datapath_obj,
-                    cookie=__alloc_cookie_id(),
-                    cookie_mask=0,
-                    table_id=__SERVICE_OF_TABLE_NUM,
+                    table_id=table_no,
                     command=ofp.OFPFC_ADD,
-                    idle_timeout=0,
-                    hard_timeout=0,
-                    priority=__BASE_SERVICE_PRIORITY,
-                    buffer_id=ofp.OFP_NO_BUFFER,
-                    out_port=ofp.OFPP_ANY,
-                    out_group=ofp.OFPG_ANY,
+                    priority=__TABLE_MISS_PRIORITY,
                     flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                    match=ofp_parser.OFPMatch(
-                        in_port=port.port_no, eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
-                        ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
-                        udp_src=68, udp_dst=67
-                    ),
+                    match=ofp_parser.OFPMatch(),
                     instructions=[
-                        ofp_parser.OFPInstructionActions(
-                            ofp.OFPIT_APPLY_ACTIONS,
-                            [
-                                ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                            ]
+                        ofp_parser.OFPInstructionActions(ofp.OFPIT_CLEAR_ACTIONS, [])
+                    ]
+                )
+            )
+
+        #  Default Flows for __PORT_SEGREGATION_TABLE are:
+        #  - DHCP Boot
+        #  - ArchSDN Discovery Beacon
+        #  - Table-Miss
+
+        boot_dhcp = ofp_parser.OFPFlowMod(
+            datapath=datapath_obj,
+            cookie=__alloc_cookie_id(),
+            table_id=__PORT_SEGREGATION_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=__TABLE_0_DISCOVERY_PRIORITY,
+            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+            match=ofp_parser.OFPMatch(
+                eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
+                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
+                udp_src=68, udp_dst=67
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
+                    ]
+                )
+            ]
+        )
+
+        archsdn_beacon = ofp_parser.OFPFlowMod(
+            datapath=datapath_obj,
+            cookie=__alloc_cookie_id(),
+            table_id=__PORT_SEGREGATION_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=__TABLE_0_DISCOVERY_PRIORITY,
+            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+            match=ofp_parser.OFPMatch(eth_type=0xAAAA),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
+                    ]
+                )
+            ]
+        )
+
+        #  Default Flows for __HOST_FILTERING_TABLE are:
+        #  - ARP packets whose destination are IPs within the service network, are redirected to controller.
+        #  - ICMP packets destined to the service IP network, are redirected to controller.
+        #  - DNS packets destined to the service IP network, are redirected to controller.
+        #  - IPv4 packets sent by a network host to another network host, are redirected to controller.
+
+        # Activate a flow to redirect to the controller ARP Request packets sent from the host to the
+        #   controller, from pkt_in_port.
+        arp_flow = ofp_parser.OFPFlowMod(
+            datapath=datapath_obj,
+            cookie=__alloc_cookie_id(),
+            table_id=__HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=__TABLE_1_LAYER_3_PRIORITY,
+            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+            match=ofp_parser.OFPMatch(
+                eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_ARP,
+                arp_op=1, arp_tpa=(str(ipv4_service), 0xFFFFFFFF), arp_tha='00:00:00:00:00:00'
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(
+                            port=ofp.OFPP_CONTROLLER,
+                            max_len=ofp.OFPCML_NO_BUFFER
                         )
                     ]
                 )
-                datapath_obj.send_msg(boot_dhcp)
-                __active_flows[boot_dhcp.cookie] = (boot_dhcp, datapath_obj.id)
+            ]
+        )
 
-                archsdn_beacon = ofp_parser.OFPFlowMod(
-                    datapath=datapath_obj,
-                    cookie=__alloc_cookie_id(),
-                    cookie_mask=0,
-                    table_id=__SERVICE_OF_TABLE_NUM,
-                    command=ofp.OFPFC_ADD,
-                    idle_timeout=0,
-                    hard_timeout=0,
-                    priority=__BASE_SERVICE_PRIORITY,
-                    buffer_id=ofp.OFP_NO_BUFFER,
-                    out_port=ofp.OFPP_ANY,
-                    out_group=ofp.OFPG_ANY,
-                    flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                    match=ofp_parser.OFPMatch(in_port=port.port_no, eth_type=0xAAAA),
-                    instructions=[
-                        ofp_parser.OFPInstructionActions(
-                            ofp.OFPIT_APPLY_ACTIONS,
-                            [
-                                ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                            ]
+        # Activate a flow to redirect to the controller ICMP Request packets sent from the host to the
+        #   controller, from pkt_in_port.
+        service_icmp_flow = ofp_parser.OFPFlowMod(
+            datapath=datapath_obj,
+            cookie=__alloc_cookie_id(),
+            table_id=__HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=__TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+            match=ofp_parser.OFPMatch(
+                eth_type=ether.ETH_TYPE_IP, eth_dst=str(mac_service),
+                ipv4_dst=str(ipv4_service),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(
+                            port=ofp.OFPP_CONTROLLER,
+                            max_len=ofp.OFPCML_NO_BUFFER
                         )
                     ]
                 )
-                datapath_obj.send_msg(archsdn_beacon)
-                __active_flows[archsdn_beacon.cookie] = (archsdn_beacon, datapath_obj.id)
+            ]
+        )
 
-                mpls_packets = ofp_parser.OFPFlowMod(
-                    datapath=datapath_obj,
-                    cookie=__alloc_cookie_id(),
-                    cookie_mask=0,
-                    table_id=__SERVICE_OF_TABLE_NUM,
-                    command=ofp.OFPFC_ADD,
-                    idle_timeout=0,
-                    hard_timeout=0,
-                    priority=__MPLS_FLOW_PRIORITY,
-                    buffer_id=ofp.OFP_NO_BUFFER,
-                    out_port=ofp.OFPP_ANY,
-                    out_group=ofp.OFPG_ANY,
-                    flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                    match=ofp_parser.OFPMatch(in_port=port.port_no, eth_type=ether.ETH_TYPE_MPLS),
-                    instructions=[ofp_parser.OFPInstructionGotoTable(table_id=__MPLS_OF_TABLE_NUM)]
+        # Activate a flow to redirect to the controller DNS packets sent from the host to the
+        #   controller, from pkt_in_port.
+        service_dns_flow = ofp_parser.OFPFlowMod(
+            datapath=datapath_obj,
+            cookie=__alloc_cookie_id(),
+            table_id=__HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=__TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+            match=ofp_parser.OFPMatch(
+                eth_dst=str(mac_service), eth_type=ether.ETH_TYPE_IP,
+                ipv4_dst=str(ipv4_service),
+                ip_proto=inet.IPPROTO_UDP, udp_dst=53
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(
+                            port=ofp.OFPP_CONTROLLER,
+                            max_len=ofp.OFPCML_NO_BUFFER)
+                    ]
                 )
-                datapath_obj.send_msg(mpls_packets)
-                __active_flows[mpls_packets.cookie] = (mpls_packets, datapath_obj.id)
+            ]
+        )
 
+        # Activate a flow to redirect to the controller, ipv4 packets sent by a network host to another network host.
+        default_ipv4_flow = ofp_parser.OFPFlowMod(
+            datapath=datapath_obj,
+            cookie=__alloc_cookie_id(),
+            table_id=__HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=__TABLE_1_LAYER_3_PRIORITY,
+            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+            match=ofp_parser.OFPMatch(
+                eth_type=ether.ETH_TYPE_IP,
+                ipv4_src=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+                ipv4_dst=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(
+                            port=ofp.OFPP_CONTROLLER,
+                            max_len=ofp.OFPCML_NO_BUFFER
+                        )
+                    ]
+                )
+            ]
+        )
+
+        datapath_obj.send_msg(boot_dhcp)
+        datapath_obj.send_msg(archsdn_beacon)
+        datapath_obj.send_msg(arp_flow)
+        datapath_obj.send_msg(service_icmp_flow)
+        datapath_obj.send_msg(service_dns_flow)
+        datapath_obj.send_msg(default_ipv4_flow)
         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
+        __active_flows[boot_dhcp.cookie] = (boot_dhcp, datapath_obj.id)
+        __active_flows[archsdn_beacon.cookie] = (archsdn_beacon, datapath_obj.id)
+        __active_flows[arp_flow.cookie] = (arp_flow, datapath_obj.id)
+        __active_flows[service_icmp_flow.cookie] = (service_icmp_flow, datapath_obj.id)
+        __active_flows[service_dns_flow.cookie] = (service_dns_flow, datapath_obj.id)
+        __active_flows[default_ipv4_flow.cookie] = (default_ipv4_flow, datapath_obj.id)
+
+
+        # Stage 3 -> Enable all switching ports TODO: and send DHCP FORCERENEW ?? rfc3203
         for port in dp_event.ports:
             datapath_obj.send_msg(
                 ofp_parser.OFPPortMod(
@@ -650,9 +773,9 @@ def process_datapath_event(dp_event):
             )
         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
-        if datapath_id in __topology_beacons:
-            _log.warning("A beacon was already active for switch {:016X}. Canceling.".format(datapath_id))
-            __topology_beacons[datapath_id].cancel()
+        assert datapath_id not in __topology_beacons, \
+            "A beacon was already active for switch {:016X}.".format(datapath_id)
+
         __topology_beacons[datapath_id] = hub.spawn(__send_discovery_beacon)
         _log.info("Switch Connect Event: {:s}".format(str(dp_event.__dict__)))
 
@@ -742,6 +865,41 @@ def process_datapath_event(dp_event):
 
 
 def process_port_change_event(port_change_event):
+    """
+    This procedure answer to port change events, sent by the OpenFlow switches present in the sector.
+
+    Three different types of events are handled by this procedure:
+    1) New port added to the switch
+    2) Existent port removed from the switch
+    3) Port state changed.
+
+    <-- Adding new Port -->
+    When a new port is added to the switch, the controller registers the new port and waits for the reception of DHCP
+    packets or ArchSDN discovery beacon packets. Nothing more is done.
+
+    <-- Removing existent Port -->
+    When an existent port is removed, it is necessary to remove the flows associated with this port. Flows in
+    __PORT_SEGREGATION_TABLE which match the input port with the removed port are removed.
+    Then, it is necessary to determine which active scenarios have been affected by the loss of this port and disable
+    them. By disabling the scenarios, flows will be removed from this and other switches.
+    It is preferable to determine which network scenarios are affected, for the sake of organization, instead of just
+    removing all the flows which match or output packets to the removed port.
+
+    <-- Port State Change -->
+    Two port state changes are handled by ArchSDN:
+      1) Link Down (OFPPS_LINK_DOWN) - Link connection was lost (cable disconnected)
+        - In this case, flows in __PORT_SEGREGATION_TABLE which match the input port to the port which lost link are
+          removed. Then, it is necessary to determine which active scenarios have been affected, and reinstate those
+          scenarios is the priority.
+
+      2) Link Live (OFPPS_LIVE) - Link connection was established (cable connect).
+        - New state is registered and port is considered to be Up. The packets received (DHCP and ArchSDN discovery
+        beacon) through the interface will determine what will happen next.
+
+
+    :param port_change_event: ofp_event.EventOFPPortStateChange instance
+    :return: None
+    """
     assert __default_configs, "engine not initialised"
 
     # {'datapath': <ryu.controller.controller.Datapath object at 0x7fb5da0fe2e8>, 'reason': 2, 'port_no': 1}
@@ -810,39 +968,33 @@ def process_port_change_event(port_change_event):
 
             old_state = switch.ports[port_no]['state']
             new_state = entities.Switch.PORT_STATE(port.state)
-            if old_state != new_state:
-                if entities.Switch.PORT_STATE.OFPPS_LINK_DOWN in new_state:
-                    # Port is down. Detect which scenarios are affected, take them down,
-                    #   send advertisements if necessary and try to rebuild the scenarios
+            if old_state != new_state: # If the port state has changed...
+                if entities.Switch.PORT_STATE.OFPPS_LINK_DOWN in new_state:  # Port link state is Down...
+
+                    # Removes all flows at __PORT_SEGREGATION_TABLE matching the removed port
+                    datapath_obj.send_msg(
+                        ofp_parser.OFPFlowMod(
+                            datapath=datapath_obj,
+                            table_id=__PORT_SEGREGATION_TABLE,
+                            command=ofp.OFPFC_DELETE,
+                            out_port=ofp.OFPP_ANY,
+                            out_group=ofp.OFPG_ANY,
+                            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+                            match=ofp_parser.OFPMatch(in_port=port_no)
+                        )
+                    )
+                    __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
+
                     def flow_filter(elem):
-                        (flow, switch_id) = elem
+                        (flow_obj, switch_id) = elem
                         if switch_id != datapath_id:
                             return False
-                        if flow.match:
-                            for match_field in flow.match.fields:
-                                    return type(match_field) is ofp_parser.MTInPort and match_field.value == port_no
+                        if flow_obj.match:
+                            for match_field in flow_obj.match.fields:
+                                return type(match_field) is ofp_parser.MTInPort and match_field.value == port_no
 
                     filtered_flows = tuple(filter(flow_filter, __active_flows.items()))
-
                     for (flow, _) in filtered_flows:
-                        datapath_obj.send_msg(  # Removes all flows registered in this switch.
-                            ofp_parser.OFPFlowMod(
-                                datapath=datapath_obj,
-                                cookie=flow.cookie,
-                                cookie_mask=0,
-                                table_id=ofp.OFPTT_ALL,
-                                command=ofp.OFPFC_DELETE,
-                                idle_timeout=0,
-                                hard_timeout=0,
-                                priority=__BASE_SERVICE_PRIORITY,
-                                buffer_id=ofp.OFP_NO_BUFFER,
-                                out_port=ofp.OFPP_ANY,
-                                out_group=ofp.OFPG_ANY,
-                                flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                                match=ofp_parser.OFPMatch(in_port=port_no),
-                                instructions=None
-                            )
-                        )
                         _log.warning(
                             "Flow with ID {:d} configured at Switch {:016X} for port {:d} was removed".format(
                                 flow.cookie, port_no, datapath_id
@@ -851,93 +1003,9 @@ def process_port_change_event(port_change_event):
                         del __active_flows[flow.cookie]
                         __free_cookie_id(flow.cookie)
 
-                    __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
-
-                elif entities.Switch.PORT_STATE.OFPPS_LIVE in new_state:
-                    # Port is up. Restart all flows.
-
-                    boot_dhcp = ofp_parser.OFPFlowMod(
-                        datapath=datapath_obj,
-                        cookie=__alloc_cookie_id(),
-                        cookie_mask=0,
-                        table_id=__SERVICE_OF_TABLE_NUM,
-                        command=ofp.OFPFC_ADD,
-                        idle_timeout=0,
-                        hard_timeout=0,
-                        priority=__BASE_SERVICE_PRIORITY,
-                        buffer_id=ofp.OFP_NO_BUFFER,
-                        out_port=ofp.OFPP_ANY,
-                        out_group=ofp.OFPG_ANY,
-                        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                        match=ofp_parser.OFPMatch(
-                            in_port=port_no, eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
-                            ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
-                            udp_src=68, udp_dst=67
-                        ),
-                        instructions=[
-                            ofp_parser.OFPInstructionActions(
-                                ofp.OFPIT_APPLY_ACTIONS,
-                                [
-                                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                                ]
-                            )
-                        ]
-                    )
-                    datapath_obj.send_msg(boot_dhcp)
-                    __active_flows[boot_dhcp.cookie] = (boot_dhcp, datapath_obj.id)
-
-                    archsdn_beacon = ofp_parser.OFPFlowMod(
-                        datapath=datapath_obj,
-                        cookie=__alloc_cookie_id(),
-                        cookie_mask=0,
-                        table_id=__SERVICE_OF_TABLE_NUM,
-                        command=ofp.OFPFC_ADD,
-                        idle_timeout=0,
-                        hard_timeout=0,
-                        priority=__BASE_SERVICE_PRIORITY,
-                        buffer_id=ofp.OFP_NO_BUFFER,
-                        out_port=ofp.OFPP_ANY,
-                        out_group=ofp.OFPG_ANY,
-                        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                        match=ofp_parser.OFPMatch(in_port=port_no, eth_type=0xAAAA),
-                        instructions=[
-                            ofp_parser.OFPInstructionActions(
-                                ofp.OFPIT_APPLY_ACTIONS,
-                                [
-                                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                                ]
-                            )
-                        ]
-                    )
-
-                    datapath_obj.send_msg(archsdn_beacon)
-                    __active_flows[archsdn_beacon.cookie] = (archsdn_beacon, datapath_obj.id)
-
-                    mpls_packets = ofp_parser.OFPFlowMod(
-                        datapath=datapath_obj,
-                        cookie=__alloc_cookie_id(),
-                        cookie_mask=0,
-                        table_id=__SERVICE_OF_TABLE_NUM,
-                        command=ofp.OFPFC_ADD,
-                        idle_timeout=0,
-                        hard_timeout=0,
-                        priority=__MPLS_FLOW_PRIORITY,
-                        buffer_id=ofp.OFP_NO_BUFFER,
-                        out_port=ofp.OFPP_ANY,
-                        out_group=ofp.OFPG_ANY,
-                        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                        match=ofp_parser.OFPMatch(in_port=port_no, eth_type=ether.ETH_TYPE_MPLS),
-                        instructions=[ofp_parser.OFPInstructionGotoTable(table_id=__MPLS_OF_TABLE_NUM)]
-                    )
-
-                    datapath_obj.send_msg(mpls_packets)
-                    __active_flows[mpls_packets.cookie] = (mpls_packets, datapath_obj.id)
-                    __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
-                    _log.warning(
-                        "Default flows have been configured at Switch {:016X} for port {:d}".format(
-                            port_no, datapath_id
-                        )
-                    )
+                elif entities.Switch.PORT_STATE.OFPPS_LIVE in new_state: # Port link state is Live...
+                    # TODO: This event could be used to try and reestablish previous scenarios that were once lost...
+                    pass
 
                 _log.warning(
                     "Port {:d} state at Switch {:016X} changed from {:s} to {:s}".format(
@@ -1298,183 +1366,27 @@ def process_packet_in_event(packet_in_event):
                         client_info = database.query_client_info(client_id)
                         client_ipv4 = client_info["ipv4"]
 
-                        # Activate a flow to redirect to the controller ARP Request packets sent from the host to the
-                        #   controller, from pkt_in_port.
-                        arp_flow = ofp_parser.OFPFlowMod(
-                            datapath=msg.datapath,
+                        port_segregation_flow = ofp_parser.OFPFlowMod(
+                            datapath=datapath_obj,
                             cookie=__alloc_cookie_id(),
-                            cookie_mask=0,
-                            table_id=__SERVICE_OF_TABLE_NUM,
+                            table_id=__PORT_SEGREGATION_TABLE,
                             command=ofp.OFPFC_ADD,
-                            idle_timeout=0,
-                            hard_timeout=0,
-                            priority=__BASE_SERVICE_PRIORITY,
-                            buffer_id=ofp.OFP_NO_BUFFER,
-                            out_port=ofp.OFPP_ANY,
-                            out_group=ofp.OFPG_ANY,
+                            priority=__TABLE_0_PORT_PRIORITY,
                             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
                             match=ofp_parser.OFPMatch(
                                 in_port=pkt_in_port,
-                                eth_dst='ff:ff:ff:ff:ff:ff', eth_src=pkt.src, eth_type=ether.ETH_TYPE_ARP,
-                                arp_op=1, arp_spa=str(client_ipv4), arp_tpa=(str(ipv4_service), 0xFFFFFFFF),
-                                arp_sha=pkt.src, arp_tha='00:00:00:00:00:00'
+                                eth_src=pkt_src_mac,
                             ),
                             instructions=[
-                                ofp_parser.OFPInstructionActions(
-                                    ofp.OFPIT_APPLY_ACTIONS,
-                                    [
-                                        ofp_parser.OFPActionOutput(
-                                            port=ofp.OFPP_CONTROLLER,
-                                            max_len=ofp.OFPCML_NO_BUFFER
-                                        )
-                                    ]
-                                )
+                                ofp_parser.OFPInstructionGotoTable(table_id=__HOST_FILTERING_TABLE)
                             ]
                         )
-                        datapath_obj.send_msg(arp_flow)
-                        __active_flows[arp_flow.cookie] = (arp_flow, datapath_obj.id)
 
-                        # Activate a flow to redirect to the controller ICMP Request packets sent from the host to the
-                        #   controller, from pkt_in_port.
-                        icmp_flow = ofp_parser.OFPFlowMod(
-                            datapath=msg.datapath,
-                            cookie=__alloc_cookie_id(),
-                            cookie_mask=0,
-                            table_id=__SERVICE_OF_TABLE_NUM,
-                            command=ofp.OFPFC_ADD,
-                            idle_timeout=0,
-                            hard_timeout=0,
-                            priority=__BASE_SERVICE_PRIORITY,
-                            buffer_id=ofp.OFP_NO_BUFFER,
-                            out_port=ofp.OFPP_ANY,
-                            out_group=ofp.OFPG_ANY,
-                            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                            match=ofp_parser.OFPMatch(
-                                in_port=pkt_in_port, eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
-                                ipv4_src=str(client_ipv4),
-                                ip_proto=inet.IPPROTO_ICMP,
-                                #icmpv4_type=8, icmpv4_code=0
-                            ),
-                            instructions=[
-                                ofp_parser.OFPInstructionActions(
-                                    ofp.OFPIT_APPLY_ACTIONS,
-                                    [
-                                        ofp_parser.OFPActionOutput(
-                                            port=ofp.OFPP_CONTROLLER,
-                                            max_len=ofp.OFPCML_NO_BUFFER
-                                        )
-                                    ]
-                                )
-                            ]
-                        )
-                        datapath_obj.send_msg(icmp_flow)
-                        __active_flows[icmp_flow.cookie] = (icmp_flow, datapath_obj.id)
-
-                        # Activate a flow to redirect to the controller DNS packets sent from the host to the
-                        #   controller, from pkt_in_port.
-                        dns_flow = ofp_parser.OFPFlowMod(
-                            datapath=msg.datapath,
-                            cookie=__alloc_cookie_id(),
-                            cookie_mask=0,
-                            table_id=__SERVICE_OF_TABLE_NUM,
-                            command=ofp.OFPFC_ADD,
-                            idle_timeout=0,
-                            hard_timeout=0,
-                            priority=__BASE_SERVICE_PRIORITY,
-                            buffer_id=ofp.OFP_NO_BUFFER,
-                            out_port=ofp.OFPP_ANY,
-                            out_group=ofp.OFPG_ANY,
-                            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                            match=ofp_parser.OFPMatch(
-                                in_port=pkt_in_port, eth_dst=str(mac_service), eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
-                                ipv4_src=str(client_ipv4), ipv4_dst=str(ipv4_service), ip_proto=inet.IPPROTO_UDP,
-                                udp_dst=53
-                            ),
-                            instructions=[
-                                ofp_parser.OFPInstructionActions(
-                                    ofp.OFPIT_APPLY_ACTIONS,
-                                    [
-                                        ofp_parser.OFPActionOutput(
-                                            port=ofp.OFPP_CONTROLLER,
-                                            max_len=ofp.OFPCML_NO_BUFFER)
-                                    ]
-                                )
-                            ]
-                        )
-                        datapath_obj.send_msg(dns_flow)
-                        __active_flows[dns_flow.cookie] = (dns_flow, datapath_obj.id)
+                        datapath_obj.send_msg(port_segregation_flow)
                         __send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
-                        # Activate a flow to redirect to the controller UDP Request packets sent from the host to the
-                        #   controller, from pkt_in_port.
-                        udp_flow = ofp_parser.OFPFlowMod(
-                            datapath=msg.datapath,
-                            cookie=__alloc_cookie_id(),
-                            cookie_mask=0,
-                            table_id=__SERVICE_OF_TABLE_NUM,
-                            command=ofp.OFPFC_ADD,
-                            idle_timeout=0,
-                            hard_timeout=0,
-                            priority=__BASE_SERVICE_PRIORITY,
-                            buffer_id=ofp.OFP_NO_BUFFER,
-                            out_port=ofp.OFPP_ANY,
-                            out_group=ofp.OFPG_ANY,
-                            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                            match=ofp_parser.OFPMatch(
-                                in_port=pkt_in_port, eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
-                                ipv4_src=str(client_ipv4), ipv4_dst=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
-                                ip_proto=inet.IPPROTO_UDP,
-                            ),
-                            instructions=[
-                                ofp_parser.OFPInstructionActions(
-                                    ofp.OFPIT_APPLY_ACTIONS,
-                                    [
-                                        ofp_parser.OFPActionOutput(
-                                            port=ofp.OFPP_CONTROLLER,
-                                            max_len=ofp.OFPCML_NO_BUFFER
-                                        )
-                                    ]
-                                )
-                            ]
-                        )
-                        datapath_obj.send_msg(udp_flow)
-                        __active_flows[udp_flow.cookie] = (udp_flow, datapath_obj.id)
+                        __active_flows[port_segregation_flow.cookie] = (port_segregation_flow, datapath_obj.id)
 
-                        # Activate a flow to redirect to the controller TCP Request packets sent from the host to the
-                        #   controller, from pkt_in_port.
-                        tcp_flow = ofp_parser.OFPFlowMod(
-                            datapath=msg.datapath,
-                            cookie=__alloc_cookie_id(),
-                            cookie_mask=0,
-                            table_id=__SERVICE_OF_TABLE_NUM,
-                            command=ofp.OFPFC_ADD,
-                            idle_timeout=0,
-                            hard_timeout=0,
-                            priority=__BASE_SERVICE_PRIORITY,
-                            buffer_id=ofp.OFP_NO_BUFFER,
-                            out_port=ofp.OFPP_ANY,
-                            out_group=ofp.OFPG_ANY,
-                            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                            match=ofp_parser.OFPMatch(
-                                in_port=pkt_in_port, eth_src=pkt.src, eth_type=ether.ETH_TYPE_IP,
-                                ipv4_src=str(client_ipv4), ipv4_dst=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
-                                ip_proto=inet.IPPROTO_TCP,
-                            ),
-                            instructions=[
-                                ofp_parser.OFPInstructionActions(
-                                    ofp.OFPIT_APPLY_ACTIONS,
-                                    [
-                                        ofp_parser.OFPActionOutput(
-                                            port=ofp.OFPP_CONTROLLER,
-                                            max_len=ofp.OFPCML_NO_BUFFER
-                                        )
-                                    ]
-                                )
-                            ]
-                        )
-
-                        datapath_obj.send_msg(tcp_flow)
-                        __active_flows[udp_flow.cookie] = (tcp_flow, datapath_obj.id)
 
                         #  Sending DHCP Ack to host
                         dhcp_ack = Ether(src=str(mac_service), dst=pkt.src) \
@@ -2060,7 +1972,7 @@ def process_packet_in_event(packet_in_event):
                 # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
                 #   It is only necessary to forward the packets from one network interface to the other.
 
-                if src_port is None and dst_port is None:
+                #if src_port is None and dst_port is None:
 
 
                 (single_switch_id, switch_in_port, switch_out_port) = uni_tunnel_scenario.path[1]
