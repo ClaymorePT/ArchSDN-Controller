@@ -7,14 +7,13 @@
     - Bidirectional Communication between two hosts
     - Unidirectional Communication from one host to another
 
-
 """
 
 import logging
-from threading import RLock, Lock
-from enum import Enum, auto
+from threading import RLock
 from functools import partial
 from abc import ABC, abstractmethod
+from copy import copy
 
 import networkx as nx
 
@@ -38,273 +37,271 @@ __suported_entities_str = ", ".join((str(i) for i in __suported_entities))
 __sector_initialized = False
 
 
-class ScenarioRequest(Enum):
-    ONE_WAY = auto()
-    TWO_WAY = auto()
+class SectorPath(ABC):
+    @abstractmethod
+    def __del__(self):
+        pass
 
+    @abstractmethod
+    def __len__(self):
+        pass
 
-class NetworkScenario(ABC):
     @property
+    @abstractmethod
+    def id(self):
+        pass
+
+    @property
+    @abstractmethod
+    def entity_a(self):
+        pass
+
+    @property
+    @abstractmethod
+    def entity_b(self):
+        pass
+
+    @property
+    @abstractmethod
+    def switches_info(self):
+        pass
+
+    @abstractmethod
+    def has_entity(self, entity_id):
+        pass
+
+    @abstractmethod
+    def uses_edge(self, edge):
+        pass
+
+    @abstractmethod
+    def is_bidirectional(self):
+        pass
+
+
+class __OneDirectionPath(SectorPath):
+    def __init__(self, sector_path, bandwidth_dealocation_callback):
+        assert len(sector_path) >= 3, "sector_path length expected to be equal or higher than 3"
+
+        self.__sector_path = sector_path
+        self.__bandwidth_dealocation_callback = bandwidth_dealocation_callback
+
+    def __del__(self):
+        self.__bandwidth_dealocation_callback()
+
+    def __len__(self):
+        return len(self.__sector_path)
+
     def id(self):
         return id(self)
 
     @property
-    @abstractmethod
-    def type(self):
-        pass
-
-    @abstractmethod
-    def has_entity(self, entity_id):
-        pass
-
-    @abstractmethod
-    def has_edge(self, edge):
-        pass
-
-
-class __Tunnel(NetworkScenario):
-    _recycled_mpls_labels = []
-    _mpls_label_id_counter = 16
-    _mpls_lock = Lock()
-
-    # MPLS reserved ids
-    # https://tools.ietf.org/html/rfc7274
-    # https://www.iana.org/assignments/mpls-label-values/mpls-label-values.xhtml
-
-    @staticmethod
-    def _alloc_mpls_label_id():
-        with __class__._mpls_lock:
-            if __class__._mpls_label_id_counter == 0x100000:  # 0x100000 is the maximum label ID value
-                raise ValueError("No MPLS labels available.")
-            if len(__class__._recycled_mpls_labels):
-                return __class__._recycled_mpls_labels.pop()
-            __class__._mpls_label_id_counter = __class__._mpls_label_id_counter + 1
-            return __class__._mpls_label_id_counter
-
-    @staticmethod
-    def _free_mpls_label_id(label_id):
-        with __class__._mpls_lock:
-            if label_id <= 16:
-                raise ValueError("MPLS label ID cannot be lower than 16")
-            if label_id > __class__._mpls_label_id_counter or label_id in __class__._recycled_mpls_labels:
-                raise ValueError("MPLS label ID was not allocated.")
-
-            __class__._recycled_mpls_labels.append(label_id)
-
-            while len(__class__._recycled_mpls_labels) > 0:
-                max_value = max(__class__._recycled_mpls_labels)
-                if __class__._mpls_label_id_counter == max_value:
-                    __class__._recycled_mpls_labels.remove(max_value)
-                    __class__._mpls_label_id_counter = __class__._mpls_label_id_counter - 1
-                else:
-                    break
-
-    @property
-    @abstractmethod
-    def path(self):
-        pass
-
-    @property
-    def length(self):
-        return len(self.path)
-
-    @property
-    @abstractmethod
     def entity_a(self):
-        pass
-
-    @property
-    @abstractmethod
-    def entity_b(self):
-        pass
-
-    @property
-    @abstractmethod
-    def switches(self):
-        pass
-
-    @property
-    @abstractmethod
-    def core_switches(self):
-        pass
-
-    @property
-    @abstractmethod
-    def mpls_label(self):
-        pass
-
-
-
-class __OneWayTunnel(__Tunnel):
-    """
-       One-Way Tunnel
-    """
-    def __init__(self, path, edges, remove_scenario):
-        assert isinstance(remove_scenario, partial), \
-            "unregister_scenario expected to be functools.partial object. Got {:s}".format(
-                str(type(remove_scenario))
-            )
-        assert len(path) >= 3, "path length is invalid. Path: [{:s}]".format("][".join(tuple((str(i) for i in path))))
-
-        self.__path = path
-        self.__edges = edges
-        self.__remove_scenario = remove_scenario
-        try:
-            if len(path) >= 4:
-                self.__mpls_label = self._alloc_mpls_label_id()
-            else:
-                self.__mpls_label = None
-
-        except ValueError:
-            raise CannotCreateScenario()
-
-    def __del__(self):
-        # remove the bandwidth allocation from the sector, when this object is removed
-        self.__remove_scenario()
-        if self.__mpls_label:
-            self._free_mpls_label_id(self.__mpls_label)
-
-    def __str__(self):
-        return "Network Scenario - Type {:s}; Path: [{:s}]".format(
-                    str(ScenarioRequest.ONE_WAY),
-                    "][".join(tuple((str(i) for i in self.__path)))
-                )
-
-    @property
-    def type(self):
-        return ScenarioRequest.ONE_WAY
-
-    @property
-    def path(self):
-        return self.__path
-
-    @property
-    def entity_a(self):
-        return query_entity(self.__path[0])
+        return copy(self.__sector_path[0])
 
     @property
     def entity_b(self):
-        return query_entity(self.__path[-1])
+        return copy(self.__sector_path[-1])
 
     @property
-    def mpls_label(self):
-        return self.__mpls_label
-
-    @property
-    def switches(self):
-        if len(self.__path) == 3:
-            return tuple(query_entity(self.__path[1][0]))
-        return tuple((query_entity(switch_info[0]) for switch_info in self.__path[1:-1]))
-
-    @property
-    def core_switches(self):
-        if len(self.__path) <= 4:
-            return tuple()
+    def switches_info(self):
+        if len(self.__sector_path) == 3:
+            return (copy(self.__sector_path[1]),)
         else:
-            return tuple((query_entity(switch_info[0]) for switch_info in self.__path[2:-2]))
-
-    @property
-    def edge_switches(self):
-        return (query_entity(self.__path[1][0]), query_entity(self.__path[-2][0]))
+            return tuple((copy(elem) for elem in self.__sector_path[1:-1]))
 
     def has_entity(self, entity_id):
-        if entity_id == self.__path[0] or entity_id == self.__path[-1]:
+        if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
             return True
-
-        for elem in self.__path[1:-1]:
-            if entity_id == elem[0]:
+        for (switch_id, _, _) in self.__sector_path[1:-1]:
+            if entity_id == switch_id:
                 return True
+
+    def uses_edge(self, edge):
+        # (node_a_id) --edge_port-- > (node_b_id)
+        (node_a_id, node_b_id, edge_port) = edge
+        path_len = len(self.__sector_path)
+        for i in range(1, path_len-1):
+            if i == 1:
+                entity_a_id = self.__sector_path[0]
+                (switch_id, in_port, out_port) = self.__sector_path[i]
+                (switch_id_after, in_port_id_after, _) = self.__sector_path[i + 1]
+                # (entity_a_id) ---in_port---> (switch_id)
+                if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
+                    return True
+
+                # (entity_a_id) <---in_port--- (switch_id)
+                if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
+                    return True
+
+                # (switch_id_current) ---out_port_current---> (switch_id_after)
+                if (switch_id == node_a_id) and (switch_id_after == node_b_id) and (out_port == edge_port):
+                    return True
+
+                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                if (switch_id_after == node_a_id) and (switch_id == node_b_id) and (in_port_id_after == edge_port):
+                    return True
+
+            elif i == path_len-2:
+                (switch_id_before, _, out_port_id_before) = self.__sector_path[i - 1]
+                (switch_id, in_port, out_port) = self.__sector_path[i]
+                entity_b_id = self.__sector_path[len(self.__sector_path)-1]
+
+                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                if (switch_id_before == node_a_id) and (switch_id == node_b_id) and (
+                        out_port_id_before == edge_port):
+                    return True
+
+                # (switch_id_before) <---in_port_current--- (switch_id_current)
+                if (switch_id == node_a_id) and (switch_id_before == node_b_id) and (
+                        in_port == edge_port):
+                    return True
+
+                # (switch_id) ---out_port---> (entity_b_id)
+                if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (out_port == edge_port):
+                    return True
+
+                # (entity_b_id) <---out_port--- (switch_id)
+                if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
+                    return True
+
+            else:
+                (switch_id_current, in_port_current, out_port_current) = self.__sector_path[i]
+                (switch_id_before, _, out_port_id_before) = self.__sector_path[i-1]
+                (switch_id_after, in_port_id_after, _) = self.__sector_path[i+1]
+
+                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                if (switch_id_before == node_a_id) and (switch_id_current == node_b_id) and (out_port_id_before == edge_port):
+                    return True
+
+                # (switch_id_before) <---in_port_current--- (switch_id_current)
+                if (switch_id_current == node_a_id) and (switch_id_before == node_b_id) and (in_port_current == edge_port):
+                    return True
+
+                # (switch_id_current) ---out_port_current---> (switch_id_after)
+                if (switch_id_current == node_a_id) and (switch_id_after == node_b_id) and (out_port_current == edge_port):
+                    return True
+
+                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                if (switch_id_after == node_a_id) and (switch_id_current == node_b_id) and (in_port_id_after == edge_port):
+                    return True
         return False
 
-    def has_edge(self, edge):
-        return edge in self.__edges
+    def is_bidirectional(self):
+        return False
 
 
-class __TwoWayTunnel(__Tunnel):
-    """
-        Two-Way Tunnel
-    """
-    def __init__(self, path, edges, remove_scenario):
-        assert isinstance(remove_scenario, partial), \
-            "unregister_scenario expected to be functools.partial object. Got {:s}".format(
-                str(type(remove_scenario))
-            )
-        assert len(path) >= 3, "path length is invalid. Path: [{:s}]".format("][".join(tuple((str(i) for i in path))))
+class __BiDirectionPath(SectorPath):
+    def __init__(self, sector_path, bandwidth_dealocation_callback):
+        assert len(sector_path) >= 3, "sector_path length expected to be equal or higher than 3"
 
-        self.__path = path
-        self.__edges = edges
-        self.__remove_scenario = remove_scenario
-
-        try:
-            if len(path) >= 4:
-                self.__mpls_label = self._alloc_mpls_label_id()
-            else:
-                self.__mpls_label = None
-
-        except ValueError:
-            raise CannotCreateScenario()
+        self.__sector_path = sector_path
+        self.__bandwidth_dealocation_callback = bandwidth_dealocation_callback
 
     def __del__(self):
-        # remove the bandwidth allocation from the sector, when this object is removed
-        self.__remove_scenario()
-        if self.__mpls_label:
-            self._free_mpls_label_id(self.__mpls_label)
+        self.__bandwidth_dealocation_callback()
 
-    def __str__(self):
-        return "Network Scenario - Type {:s}; Path: [{:s}]".format(
-                    str(ScenarioRequest.TWO_WAY),
-                    "][".join(tuple((str(i) for i in self.__path)))
-                )
+    def __len__(self):
+        return len(self.__sector_path)
 
-    @property
-    def type(self):
-        return ScenarioRequest.TWO_WAY
-
-    @property
-    def path(self):
-        return self.__path
+    def id(self):
+        return id(self)
 
     @property
     def entity_a(self):
-        return query_entity(self.__path[0])
+        return copy(self.__sector_path[0])
 
     @property
     def entity_b(self):
-        return query_entity(self.__path[-1])
+        return copy(self.__sector_path[-1])
 
     @property
-    def mpls_label(self):
-        return self.__mpls_label
-
-    @property
-    def switches(self):
-        if len(self.__path) == 3:
-            return tuple(query_entity(self.__path[1][0]))
-        return tuple((query_entity(switch_info[0]) for switch_info in self.__path[1:-1]))
-
-    @property
-    def core_switches(self):
-        if len(self.__path) <= 4:
-            return tuple()
+    def switches_info(self):
+        if len(self.__sector_path) == 3:
+            return (copy(self.__sector_path[1]),)
         else:
-            return tuple((query_entity(switch_info[0]) for switch_info in self.__path[2:-2]))
-
-    @property
-    def edge_switches(self):
-        return (query_entity(self.__path[1][0]), query_entity(self.__path[-2][0]))
+            return tuple((copy(elem) for elem in self.__sector_path[1:-1]))
 
     def has_entity(self, entity_id):
-        if entity_id == self.__path[0] or entity_id == self.__path[-1]:
+        if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
             return True
-
-        for elem in self.__path[1:-1]:
-            if entity_id == elem[0]:
+        for (switch_id, _, _) in self.__sector_path[1:-1]:
+            if entity_id == switch_id:
                 return True
+
+    def uses_edge(self, edge):
+        # (node_a_id) --edge_port-- > (node_b_id)
+        print(self.__sector_path)
+        (node_a_id, node_b_id, edge_port) = edge
+        path_len = len(self.__sector_path)
+        for i in range(1, path_len-1):
+            if i == 1:
+                entity_a_id = self.__sector_path[0]
+                (switch_id, in_port, out_port) = self.__sector_path[i]
+                (switch_id_after, in_port_id_after, _) = self.__sector_path[i + 1]
+                # (entity_a_id) ---in_port---> (switch_id)
+                if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
+                    return True
+
+                # (entity_a_id) <---in_port--- (switch_id)
+                if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
+                    return True
+
+                # (switch_id_current) ---out_port_current---> (switch_id_after)
+                if (switch_id == node_a_id) and (switch_id_after == node_b_id) and (out_port == edge_port):
+                    return True
+
+                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                if (switch_id_after == node_a_id) and (switch_id == node_b_id) and (in_port_id_after == edge_port):
+                    return True
+
+            elif i == path_len-2:
+                (switch_id_before, _, out_port_id_before) = self.__sector_path[i - 1]
+                (switch_id, in_port, out_port) = self.__sector_path[i]
+                entity_b_id = self.__sector_path[len(self.__sector_path)-1]
+
+                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                if (switch_id_before == node_a_id) and (switch_id == node_b_id) and (
+                        out_port_id_before == edge_port):
+                    return True
+
+                # (switch_id_before) <---in_port_current--- (switch_id_current)
+                if (switch_id == node_a_id) and (switch_id_before == node_b_id) and (
+                        in_port == edge_port):
+                    return True
+
+                # (switch_id) ---out_port---> (entity_b_id)
+                if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (out_port == edge_port):
+                    return True
+
+                # (entity_b_id) <---out_port--- (switch_id)
+                if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
+                    return True
+
+            else:
+                (switch_id_current, in_port_current, out_port_current) = self.__sector_path[i]
+                (switch_id_before, _, out_port_id_before) = self.__sector_path[i-1]
+                (switch_id_after, in_port_id_after, _) = self.__sector_path[i+1]
+
+                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                if (switch_id_before == node_a_id) and (switch_id_current == node_b_id) and (out_port_id_before == edge_port):
+                    return True
+
+                # (switch_id_before) <---in_port_current--- (switch_id_current)
+                if (switch_id_current == node_a_id) and (switch_id_before == node_b_id) and (in_port_current == edge_port):
+                    return True
+
+                # (switch_id_current) ---out_port_current---> (switch_id_after)
+                if (switch_id_current == node_a_id) and (switch_id_after == node_b_id) and (out_port_current == edge_port):
+                    return True
+
+                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                if (switch_id_after == node_a_id) and (switch_id_current == node_b_id) and (in_port_id_after == edge_port):
+                    return True
         return False
 
-    def has_edge(self, edge):
-        return edge in self.__edges
-
+    def is_bidirectional(self):
+        return True
 
 
 def initialise():
@@ -402,7 +399,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 )
             )
             if __net.has_edge(entity_a_id, entity_b_id, kwargs['switch_port_no']) or \
-                    __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_port_no']) :
+                    __net.has_edge(entity_b_id, entity_a_id, kwargs['switch_port_no']):
                 raise EntitiesAlreadyConnected()
 
             if len(
@@ -749,8 +746,7 @@ def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
             )
 
 
-def construct_scenario(
-        scenario_request,
+def construct_unidirectional_path(
         origin_id,
         target_id,
         allocated_bandwith = None
@@ -764,215 +760,111 @@ def construct_scenario(
         :param allocated_bandwith:
         :return:
     '''
-    assert isinstance(scenario_request, ScenarioRequest), "scenario_request expected to be Scenario. Got {:s}".format(
-        type(scenario_request)
-    )
     try:
         with __lock:
             path = []  # Discovered Path
             edges = []  # Path graph edges used for reservation
-            network_scenario = None
 
             if not is_entity_registered(origin_id) or not is_entity_registered(target_id):
                 raise EntityNotRegistered()
 
-            if scenario_request is ScenarioRequest.TWO_WAY:
-                # Make a copy of the network graph
-                net_cpy = __net.copy()
-                #__log.debug("Network copy:\n  {:s}".format("\n  ".join(tuple((str(edge) for edge in net_cpy.edges(data=True))))))
+            # Make a copy of the network graph
+            net_cpy = __net.copy()
 
-                # Remove edges that cannot fulfill the required bandwidth
-                if allocated_bandwith:
-                    for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
-                        if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
-                            net_cpy.remove_edge(node_a, node_b, port)
+            # Remove edges that cannot fulfill the required bandwidth
+            if allocated_bandwith:
+                for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
+                    if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
+                        net_cpy.remove_edge(node_a, node_b, port)
 
-                shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
-                assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
-                    len(shortest_path)
+            shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
+            assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
+                len(shortest_path)
+            )
+
+            #  Create a path with ports, using the calculated shortest_path
+            #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
+            if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
+                head_id = shortest_path[0]
+                tail_id = shortest_path[2]
+                switch_id = shortest_path[1]
+                port_in = max(
+                    (port for port in __net[switch_id][head_id]),
+                    key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
                 )
+                port_out = max(
+                    (port for port in __net[switch_id][tail_id]),
+                    key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                )
+                path.append(head_id)
+                path.append((switch_id, port_in, port_out))
+                path.append(tail_id)
+                edges = [
+                    (head_id, switch_id, port_in),
+                    (switch_id, tail_id, port_out),
+                ]
+                if allocated_bandwith:
+                    __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                    __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
 
-                #  Create a path with ports, using the calculated shortest_path
-                #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
-                path = []
-                edges = []
-                if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
-                    head_id = shortest_path[0]
-                    tail_id = shortest_path[2]
-                    switch_id = shortest_path[1]
+            else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
+                head_id = shortest_path[0]
+                tail_id = shortest_path[-1]
+                path.append(head_id)
+                for i in range(1, len(shortest_path)-1):
+                    before_ent_id = shortest_path[i-1]
+                    after_ent_id = shortest_path[i+1]
+                    switch_id = shortest_path[i]
                     port_in = max(
-                        (port for port in __net[switch_id][head_id]),
-                        key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
+                        (port for port in __net[switch_id][before_ent_id]),
+                        key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
                     )
                     port_out = max(
-                        (port for port in __net[switch_id][tail_id]),
-                        key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                        (port for port in __net[switch_id][after_ent_id]),
+                        key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
                     )
-                    path.append(head_id)
-                    path.append((switch_id, port_in, port_out))
-                    path.append(tail_id)
-                    edges = [
-                        (switch_id, head_id, port_in),
-                        (head_id, switch_id, port_in),
-                        (switch_id, tail_id, port_out),
-                        (tail_id, switch_id, port_out),
-                    ]
-                    if allocated_bandwith:
-                        __net[switch_id][head_id][port_in]['data']['available_speed'] -= allocated_bandwith
-                        __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
-                        __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
-                        __net[tail_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
-
-                else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
-                    head_id = shortest_path[0]
-                    tail_id = shortest_path[-1]
-                    path.append(head_id)
-                    for i in range(1, len(shortest_path)-1):
-                        before_ent_id = shortest_path[i-1]
-                        after_ent_id = shortest_path[i+1]
-                        switch_id = shortest_path[i]
-                        port_in = max(
-                            (port for port in __net[switch_id][before_ent_id]),
-                            key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
-                        )
-                        port_out = max(
-                            (port for port in __net[switch_id][after_ent_id]),
-                            key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
-                        )
-                        path.append((switch_id, port_in, port_out))
-                        if before_ent_id == head_id:
-                            edges.append((before_ent_id, switch_id, port_in))
-                            if allocated_bandwith:
-                                __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
-                        elif after_ent_id == tail_id:
-                            edges.append((after_ent_id, switch_id, port_out))
-                            if allocated_bandwith:
-                                __net[after_ent_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
-
-                        edges.append((switch_id, before_ent_id, port_in))
-                        edges.append((switch_id, after_ent_id, port_out))
+                    if before_ent_id == head_id:
+                        edges.append((before_ent_id, switch_id, port_in))
                         if allocated_bandwith:
-                            __net[switch_id][before_ent_id][port_in]['data']['available_speed'] -= allocated_bandwith
-                            __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
-
-                    path.append(tail_id)
-
-                def remove_scenario():
-                    with __lock:
-
-                        if allocated_bandwith:
-                            for (from_ent, to_ent, network_port) in edges:
-                                __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
-
-                network_scenario = __TwoWayTunnel(
-                    path,
-                    edges,
-                    partial(
-                        remove_scenario
-                    )
-                )
-
-            elif scenario_request is ScenarioRequest.ONE_WAY:
-                # Make a copy of the network graph
-                net_cpy = __net.copy()
-
-                # Remove edges that cannot fulfill the required bandwidth
-                if allocated_bandwith:
-                    for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
-                        if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
-                            net_cpy.remove_edge(node_a, node_b, port)
-
-                shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
-                assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
-                    len(shortest_path)
-                )
-
-                #  Create a path with ports, using the calculated shortest_path
-                #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
-                if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
-                    head_id = shortest_path[0]
-                    tail_id = shortest_path[2]
-                    switch_id = shortest_path[1]
-                    port_in = max(
-                        (port for port in __net[switch_id][head_id]),
-                        key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
-                    )
-                    port_out = max(
-                        (port for port in __net[switch_id][tail_id]),
-                        key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
-                    )
-                    path.append(head_id)
-                    path.append((switch_id, port_in, port_out))
-                    path.append(tail_id)
-                    edges = [
-                        (head_id, switch_id, port_in),
-                        (switch_id, tail_id, port_out),
-                    ]
-                    if allocated_bandwith:
-                        __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
-                        __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
-
-                else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
-                    head_id = shortest_path[0]
-                    tail_id = shortest_path[-1]
-                    path.append(head_id)
-                    for i in range(1, len(shortest_path)-1):
-                        before_ent_id = shortest_path[i-1]
-                        after_ent_id = shortest_path[i+1]
-                        switch_id = shortest_path[i]
-                        port_in = max(
-                            (port for port in __net[switch_id][before_ent_id]),
-                            key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
-                        )
-                        port_out = max(
-                            (port for port in __net[switch_id][after_ent_id]),
-                            key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
-                        )
-                        if before_ent_id == head_id:
-                            edges.append((before_ent_id, switch_id, port_in))
-                            if allocated_bandwith:
-                                __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
-                        elif after_ent_id == tail_id:
-                            edges.append((switch_id, after_ent_id, port_out))
-                            if allocated_bandwith:
-                                __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
-
-                        path.append((switch_id, port_in, port_out))
+                            __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                    elif after_ent_id == tail_id:
                         edges.append((switch_id, after_ent_id, port_out))
                         if allocated_bandwith:
                             __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
-                    path.append(tail_id)
 
-                def remove_scenario():
-                    with __lock:
-                        if allocated_bandwith:
-                            for (from_ent, to_ent, network_port) in edges:
+                    path.append((switch_id, port_in, port_out))
+                    edges.append((switch_id, after_ent_id, port_out))
+                    if allocated_bandwith:
+                        __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                path.append(tail_id)
+
+            def remove_scenario():
+                with __lock:
+                    if allocated_bandwith:
+                        for (from_ent, to_ent, network_port) in edges:
+                            if __net.has_edge(from_ent, to_ent, network_port):
                                 __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
 
-                network_scenario = __OneWayTunnel(
-                    path,
-                    edges,
-                    partial(
-                        remove_scenario
-                    )
+            sector_path = __OneDirectionPath(
+                path,
+                partial(
+                    remove_scenario
                 )
+            )
 
             __log.debug(
-                "Created Scenario Type {:s} with path ([{:s}]) using edges ([{:s}]) {:s}.".format(
-                    str(scenario_request),
+                "Path established ([{:s}]) using edges ([{:s}]) {:s}.".format(
                     "][".join(tuple((str(i) for i in path))),
                     "][".join(tuple((str(i) for i in edges))),
                     "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
                 )
             )
-            assert isinstance(network_scenario, NetworkScenario), \
-                "network_scenario is expected to be a Network Scenario. Got {:s}.".format(str(type(network_scenario)))
-            return network_scenario
+
+            return sector_path
 
     except nx.exception.NetworkXNoPath:
         __log.warning(
-            "Type {:s} Path not found between entities {:s} and {:s}{:s}.".format(
-                str(scenario_request),
+            "Path not found between entities {:s} and {:s}{:s}.".format(
                 str(origin_id),
                 str(target_id),
                 " capable of accommodating {:d} for bandwidth reservation".format(
@@ -982,4 +874,140 @@ def construct_scenario(
         )
         raise PathNotFound()
 
+
+def construct_bidirectional_path(
+        origin_id,
+        target_id,
+        allocated_bandwith = None
+):
+    '''
+        Constructs the scenario specified by :param scenario_type.
+
+        :param scenario_type:
+        :param origin_id:
+        :param target_id:
+        :param allocated_bandwith:
+        :return:
+    '''
+    try:
+        with __lock:
+            path = []  # Discovered Path
+            edges = []  # Path graph edges used for reservation
+
+            if not is_entity_registered(origin_id) or not is_entity_registered(target_id):
+                raise EntityNotRegistered()
+
+            # Make a copy of the network graph
+            net_cpy = __net.copy()
+            #__log.debug("Network copy:\n  {:s}".format("\n  ".join(tuple((str(edge) for edge in net_cpy.edges(data=True))))))
+
+            # Remove edges that cannot fulfill the required bandwidth
+            if allocated_bandwith:
+                for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
+                    if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
+                        net_cpy.remove_edge(node_a, node_b, port)
+
+            shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
+            assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
+                len(shortest_path)
+            )
+
+            #  Create a path with ports, using the calculated shortest_path
+            #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
+            if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
+                head_id = shortest_path[0]
+                tail_id = shortest_path[2]
+                switch_id = shortest_path[1]
+                port_in = max(
+                    (port for port in __net[switch_id][head_id]),
+                    key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
+                )
+                port_out = max(
+                    (port for port in __net[switch_id][tail_id]),
+                    key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                )
+                path.append(head_id)
+                path.append((switch_id, port_in, port_out))
+                path.append(tail_id)
+                edges = [
+                    (switch_id, head_id, port_in),
+                    (head_id, switch_id, port_in),
+                    (switch_id, tail_id, port_out),
+                    (tail_id, switch_id, port_out),
+                ]
+                if allocated_bandwith:
+                    __net[switch_id][head_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                    __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                    __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                    __net[tail_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+            else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
+                head_id = shortest_path[0]
+                tail_id = shortest_path[-1]
+                path.append(head_id)
+                for i in range(1, len(shortest_path)-1):
+                    before_ent_id = shortest_path[i-1]
+                    after_ent_id = shortest_path[i+1]
+                    switch_id = shortest_path[i]
+                    port_in = max(
+                        (port for port in __net[switch_id][before_ent_id]),
+                        key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
+                    )
+                    port_out = max(
+                        (port for port in __net[switch_id][after_ent_id]),
+                        key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
+                    )
+                    path.append((switch_id, port_in, port_out))
+                    if before_ent_id == head_id:
+                        edges.append((before_ent_id, switch_id, port_in))
+                        if allocated_bandwith:
+                            __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                    elif after_ent_id == tail_id:
+                        edges.append((after_ent_id, switch_id, port_out))
+                        if allocated_bandwith:
+                            __net[after_ent_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                    edges.append((switch_id, before_ent_id, port_in))
+                    edges.append((switch_id, after_ent_id, port_out))
+                    if allocated_bandwith:
+                        __net[switch_id][before_ent_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+
+                path.append(tail_id)
+
+            def remove_scenario():
+                with __lock:
+
+                    if allocated_bandwith:
+                        for (from_ent, to_ent, network_port) in edges:
+                            if __net.has_edge(from_ent, to_ent, network_port):
+                                __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
+
+            sector_path = __BiDirectionPath(
+                path,
+                partial(
+                    remove_scenario
+                )
+            )
+
+            __log.debug(
+                "Path established ([{:s}]) using edges ([{:s}]) {:s}.".format(
+                    "][".join(tuple((str(i) for i in path))),
+                    "][".join(tuple((str(i) for i in edges))),
+                    "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
+                )
+            )
+            return sector_path
+
+    except nx.exception.NetworkXNoPath:
+        __log.warning(
+            "Path not found between entities {:s} and {:s}{:s}.".format(
+                str(origin_id),
+                str(target_id),
+                " capable of accommodating {:d} for bandwidth reservation".format(
+                    allocated_bandwith
+                ) if allocated_bandwith else ""
+            )
+        )
+        raise PathNotFound()
 

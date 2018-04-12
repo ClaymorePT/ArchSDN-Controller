@@ -134,24 +134,23 @@ class CreateTunnel(unittest.TestCase):
         sector.connect_entities(self.switch_2.id, self.host_2.id, switch_port_no=1)
         sector.connect_entities(self.switch_1.id, self.switch_2.id, switch_a_port_no=2, switch_b_port_no=2)
 
-        scenario = sector.construct_scenario(
-            sector.ScenarioType.ICMP_TUNNEL,
+        scenario = sector.construct_bidirectional_path(
             self.host_1.id,
             self.host_2.id,
             100
         )
 
-        self.assertTrue(isinstance(scenario, sector.NetworkScenario))
+        self.assertTrue(isinstance(scenario, sector.SectorPath))
         self.assertTrue(scenario.has_entity(self.host_1.id))
         self.assertTrue(scenario.has_entity(self.host_2.id))
         self.assertTrue(scenario.has_entity(self.switch_1.id))
         self.assertTrue(scenario.has_entity(self.switch_2.id))
-        self.assertTrue(scenario.has_edge((self.host_1.id, self.switch_1.id, 1)))
-        self.assertTrue(scenario.has_edge((self.host_2.id, self.switch_2.id, 1)))
-        self.assertTrue(scenario.has_edge((self.switch_1.id, self.switch_2.id, 2)))
-        self.assertTrue(scenario.has_edge((self.switch_2.id, self.switch_1.id, 2)))
+        self.assertTrue(scenario.uses_edge((self.host_1.id, self.switch_1.id, 1)))
+        self.assertTrue(scenario.uses_edge((self.host_2.id, self.switch_2.id, 1)))
+        self.assertTrue(scenario.uses_edge((self.switch_1.id, self.switch_2.id, 2)))
+        self.assertTrue(scenario.uses_edge((self.switch_2.id, self.switch_1.id, 2)))
 
-        self.assertFalse(scenario.has_edge((self.host_1.id, self.switch_1.id, 2)))
+        self.assertFalse(scenario.uses_edge((self.host_1.id, self.switch_1.id, 2)))
 
     def test_create_tunnel_with_bandwidth_5_elements(self):
         sector.connect_entities(self.switch_1.id, self.host_1.id, switch_port_no=1)
@@ -159,41 +158,38 @@ class CreateTunnel(unittest.TestCase):
         sector.connect_entities(self.switch_2.id, self.switch_3.id, switch_a_port_no=2, switch_b_port_no=1)
         sector.connect_entities(self.switch_3.id, self.host_2.id, switch_port_no=2)
 
-        scenario = sector.construct_scenario(
-            sector.ScenarioType.ICMP_TUNNEL,
+        scenario = sector.construct_bidirectional_path(
             self.host_1.id,
             self.host_2.id,
             100
         )
 
-        self.assertTrue(isinstance(scenario, sector.NetworkScenario))
+        self.assertTrue(isinstance(scenario, sector.SectorPath))
         self.assertTrue(scenario.has_entity(self.host_1.id))
         self.assertTrue(scenario.has_entity(self.host_2.id))
         self.assertTrue(scenario.has_entity(self.switch_1.id))
         self.assertTrue(scenario.has_entity(self.switch_2.id))
-        self.assertTrue(scenario.has_edge((self.host_1.id, self.switch_1.id, 1)))
-        self.assertTrue(scenario.has_edge((self.switch_1.id, self.host_1.id, 1)))
-        self.assertTrue(scenario.has_edge((self.switch_1.id, self.switch_2.id, 2)))
-        self.assertTrue(scenario.has_edge((self.switch_2.id, self.switch_1.id, 1)))
-        self.assertTrue(scenario.has_edge((self.switch_2.id, self.switch_3.id, 2)))
-        self.assertTrue(scenario.has_edge((self.switch_3.id, self.switch_2.id, 1)))
-        self.assertTrue(scenario.has_edge((self.host_2.id, self.switch_3.id, 2)))
-        self.assertTrue(scenario.has_edge((self.switch_3.id, self.host_2.id, 2)))
+        self.assertTrue(scenario.uses_edge((self.host_1.id, self.switch_1.id, 1)))
+        self.assertTrue(scenario.uses_edge((self.switch_1.id, self.host_1.id, 1)))
+        self.assertTrue(scenario.uses_edge((self.switch_1.id, self.switch_2.id, 2)))
+        self.assertTrue(scenario.uses_edge((self.switch_2.id, self.switch_1.id, 1)))
+        self.assertTrue(scenario.uses_edge((self.switch_2.id, self.switch_3.id, 2)))
+        self.assertTrue(scenario.uses_edge((self.switch_3.id, self.switch_2.id, 1)))
+        self.assertTrue(scenario.uses_edge((self.host_2.id, self.switch_3.id, 2)))
+        self.assertTrue(scenario.uses_edge((self.switch_3.id, self.host_2.id, 2)))
 
     def test_create_tunnel_with_bandwidth_delete_and_recreate(self):
         sector.connect_entities(self.switch_1.id, self.host_1.id, switch_port_no=1)
         sector.connect_entities(self.switch_2.id, self.host_2.id, switch_port_no=1)
         sector.connect_entities(self.switch_1.id, self.switch_2.id, switch_a_port_no=2, switch_b_port_no=2)
 
-        scenario = sector.construct_scenario(
-            sector.ScenarioType.ICMP_TUNNEL,
+        scenario = sector.construct_bidirectional_path(
             self.host_1.id,
             self.host_2.id,
             100
         )
         del scenario
-        sector.construct_scenario(
-            sector.ScenarioType.UNIDIRECTIONAL_TUNNEL,
+        sector.construct_unidirectional_path(
             self.host_1.id,
             self.host_2.id,
             100
@@ -205,22 +201,19 @@ class CreateTunnel(unittest.TestCase):
         sector.connect_entities(self.switch_1.id, self.switch_2.id, switch_a_port_no=2, switch_b_port_no=2)
 
         with self.assertRaises(exceptions.PathNotFound):
-            sector.construct_scenario(
-                sector.ScenarioType.ICMP_TUNNEL,
+            sector.construct_bidirectional_path(
                 self.host_1.id,
                 self.host_2.id,
                 1000
             )
 
-        scenario = sector.construct_scenario(
-            sector.ScenarioType.ICMP_TUNNEL,
+        scenario = sector.construct_bidirectional_path(
             self.host_1.id,
             self.host_2.id,
             100
         )
         with self.assertRaises(exceptions.PathNotFound):
-            sector.construct_scenario(
-                sector.ScenarioType.UNIDIRECTIONAL_TUNNEL,
+            sector.construct_unidirectional_path(
                 self.host_1.id,
                 self.host_2.id,
                 100
