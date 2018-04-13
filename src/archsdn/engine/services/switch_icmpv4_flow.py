@@ -13,13 +13,27 @@ _log = logging.getLogger(logger_module_name(__file__))
 
 class __ICMPv4Service(Service):
 
-    def __init__(self, bidirectional_path, terminate_path_callback, mpls_label=None):
+    def __init__(self, bidirectional_path, scenario_flows, mpls_label=None):
         self.__bidirectional_path = bidirectional_path
-        self.__terminate_path = terminate_path_callback
+        self.__scenario_flows = scenario_flows
         self.__mpls_label = mpls_label
 
     def __del__(self):
-        self.__terminate_path()
+        for flow in self.__scenario_flows:
+            switch_obj = flow.datapath
+            if switch_obj.is_active:
+                switch_ofp_parser = switch_obj.ofproto_parser
+                switch_ofp = switch_obj.ofproto
+                globals.send_msg(  # Removes the registered flow from this switch.
+                    switch_ofp_parser.OFPFlowMod(
+                        datapath=switch_obj,
+                        cookie=flow.cookie,
+                        table_id=flow.table_id,
+                        command=switch_ofp.OFPFC_DELETE,
+                        flags=switch_ofp.OFPFF_SEND_FLOW_REM | switch_ofp.OFPFF_CHECK_OVERLAP
+                    )
+                )
+        globals.free_mpls_label_id(self.__mpls_label)
 
     @property
     def label(self):
@@ -42,9 +56,9 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
     assert isinstance(host_a_entity_obj, Host), "a_entity_obj type is not Host"
     assert isinstance(host_b_entity_obj, Host), "b_entity_obj type is not Host"
 
-    tunnel_cookies = []
+    tunnel_flows = []
 
-    if len(bidirectional_path) == 3:
+    if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
         #   It is only necessary to forward the packets from one network interface to the other.
 
@@ -97,8 +111,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
 
         single_switch_obj.send_msg(side_a_flow)
         single_switch_obj.send_msg(side_b_flow)
-        tunnel_cookies.append(side_a_flow.cookie)
-        tunnel_cookies.append(side_b_flow.cookie)
+        tunnel_flows.append(side_a_flow)
+        tunnel_flows.append(side_b_flow)
         globals.active_flows[side_a_flow.cookie] = (side_a_flow, unique_switch_id)
         globals.active_flows[side_b_flow.cookie] = (side_b_flow, unique_switch_id)
 
@@ -137,7 +151,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 ]
             )
             middle_switch_obj.send_msg(mpls_flow_mod)
-            tunnel_cookies.append(mpls_flow_mod.cookie)
+            tunnel_flows.append(mpls_flow_mod)
             globals.active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, middle_switch_id)
 
             mpls_flow_mod = middle_switch_ofp_parser.OFPFlowMod(
@@ -160,7 +174,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 ]
             )
             middle_switch_obj.send_msg(mpls_flow_mod)
-            tunnel_cookies.append(mpls_flow_mod.cookie)
+            tunnel_flows.append(mpls_flow_mod)
             globals.active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, middle_switch_id)
             globals.send_msg(
                 middle_switch_ofp_parser.OFPBarrierRequest(middle_switch_obj),
@@ -274,10 +288,10 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             reply_cls=side_a_switch_ofp_parser.OFPBarrierReply
         )
 
-        tunnel_cookies.append(side_a_host_to_mpls_flow.cookie)
-        tunnel_cookies.append(side_a_mpls_flow_mod.cookie)
-        tunnel_cookies.append(egress_side_a_tunnel_flow.cookie)
-        tunnel_cookies.append(foreign_host_side_a_flow.cookie)
+        tunnel_flows.append(side_a_host_to_mpls_flow)
+        tunnel_flows.append(side_a_mpls_flow_mod)
+        tunnel_flows.append(egress_side_a_tunnel_flow)
+        tunnel_flows.append(foreign_host_side_a_flow)
 
         globals.active_flows[side_a_host_to_mpls_flow.cookie] = (side_a_host_to_mpls_flow, unique_switch_id)
         globals.active_flows[side_a_mpls_flow_mod.cookie] = (side_a_mpls_flow_mod, unique_switch_id)
@@ -390,16 +404,18 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             reply_cls=side_b_switch_ofp_parser.OFPBarrierReply
         )
 
-        tunnel_cookies.append(ingress_side_b_tunnel_flow.cookie)
-        tunnel_cookies.append(side_b_mpls_flow_mod.cookie)
-        tunnel_cookies.append(egress_side_b_tunnel_flow.cookie)
-        tunnel_cookies.append(foreign_host_side_b_flow.cookie)
+        tunnel_flows.append(ingress_side_b_tunnel_flow)
+        tunnel_flows.append(side_b_mpls_flow_mod)
+        tunnel_flows.append(egress_side_b_tunnel_flow)
+        tunnel_flows.append(foreign_host_side_b_flow)
 
         globals.active_flows[ingress_side_b_tunnel_flow.cookie] = (ingress_side_b_tunnel_flow, side_b_switch_id)
         globals.active_flows[side_b_mpls_flow_mod.cookie] = (side_b_mpls_flow_mod, side_b_switch_id)
         globals.active_flows[egress_side_b_tunnel_flow.cookie] = (egress_side_b_tunnel_flow, side_b_switch_id)
         globals.active_flows[foreign_host_side_b_flow.cookie] = (foreign_host_side_b_flow, unique_switch_id)
         ###############################
+
+        return __ICMPv4Service(bidirectional_path, tunnel_flows, mpls_label)
 
 
 def __icmpv4_flow_activation_host_to_sector(bidirectional_path, mpls_label):
@@ -426,23 +442,10 @@ def __icmpv4_flow_activation_sector_to_host(bidirectional_path, mpls_label):
     raise Exception("Flow activation from Sector to Host is not implemented yet.")
 
 
-def __icmpv4_flow_activation_sector_to_sector(bidirectional_path, mpls_label):
-    entity_a_id = bidirectional_path[0]
-    entity_b_id = bidirectional_path[-1]
-    host_a_entity_obj = sector.query_entity(entity_a_id)
-    host_b_entity_obj = sector.query_entity(entity_b_id)
-
-    assert isinstance(host_a_entity_obj, Sector), "a_entity_obj type is not Sector"
-    assert isinstance(host_b_entity_obj, Sector), "b_entity_obj type is not Sector"
-
-    raise Exception("Flow activation from Sector to Sector is not implemented yet.")
-
-
 __activators = {
     (Host, Host): __icmpv4_flow_activation_host_to_host,
     (Host, Sector): __icmpv4_flow_activation_host_to_sector,
     (Sector, Host): __icmpv4_flow_activation_sector_to_host,
-    (Sector, Sector): __icmpv4_flow_activation_sector_to_sector,
 }
 
 
@@ -453,7 +456,6 @@ def icmpv4_flow_activation(bidirectional_path, mpls_label):
         This procedure contemplates 4 different scenarios:
         -> (Host, Host)
         -> (Host, Sector)
-        -> (Sector, Sector)
         -> (Sector, Host)
 
 
@@ -467,6 +469,20 @@ def icmpv4_flow_activation(bidirectional_path, mpls_label):
 
     host_a_entity_obj = sector.query_entity(bidirectional_path.entity_a)
     host_b_entity_obj = sector.query_entity(bidirectional_path.entity_b)
+    mapped_icmpv4_services = globals.mapped_services["IPv4"]["ICMP"]
 
-    __activators[(type(host_a_entity_obj), type(host_b_entity_obj))](bidirectional_path, mpls_label)
+    if (type(host_a_entity_obj), type(host_b_entity_obj)) == (Sector, Sector):
+        raise TypeError("Sector to Sector tunnel ICMPv4 tunnel makes no sense.")
 
+    if (host_a_entity_obj.id, host_b_entity_obj.id) in mapped_icmpv4_services:
+        raise Exception(
+            "ICMPv4 service between {:s} and {:s} is already implemented.".format(
+                str(host_a_entity_obj.id), str(host_b_entity_obj.id)
+            )
+        )
+
+    # Attempt to activate the service
+    icmpv4_service = __activators[(type(host_a_entity_obj), type(host_b_entity_obj))](bidirectional_path, mpls_label)
+
+    # Registering the established service
+    mapped_icmpv4_services[(host_a_entity_obj.id, host_b_entity_obj.id)] = icmpv4_service

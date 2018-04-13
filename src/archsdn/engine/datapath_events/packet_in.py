@@ -29,8 +29,8 @@ def process_event(packet_in_event):
 
     msg = packet_in_event.msg
     datapath_id = msg.datapath.id
-    ofp_parser = msg.datapath.ofproto_parser
-    ofp = msg.datapath.ofproto
+    datapath_ofp_parser = msg.datapath.ofproto_parser
+    datapath_ofp = msg.datapath.ofproto
     controller_uuid = database.get_database_info()["uuid"]
     central_policies_addresses = database.query_volatile_info()
     ipv4_network = central_policies_addresses["ipv4_network"]
@@ -40,7 +40,7 @@ def process_event(packet_in_event):
     pkt_in_port = None
     if msg.match:
         for match_field in msg.match.fields:
-            if type(match_field) is ofp_parser.MTInPort:
+            if type(match_field) is datapath_ofp_parser.MTInPort:
                 pkt_in_port = match_field.value
 
     pkt = Ether(msg.data)
@@ -196,11 +196,11 @@ def process_event(packet_in_event):
                         pdst=arp_layer.psrc
                     )
                 datapath_obj.send_msg(
-                    ofp_parser.OFPPacketOut(
+                    datapath_ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
-                        buffer_id=ofp.OFP_NO_BUFFER,
+                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
                         in_port=pkt_in_port,
-                        actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(arp_response))],
+                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(arp_response))],
                         data=bytes(arp_response)
                     )
                 )
@@ -219,6 +219,21 @@ def process_event(packet_in_event):
                 pkt.src, str(pkt_ipv4_src), str(pkt_ipv4_dst), datapath_id, pkt_in_port
             )
         )
+
+        if \
+                pkt_ipv4_src == IPv4Address("0.0.0.0") and \
+                pkt_ipv4_dst == IPv4Address("255.255.255.255") and \
+                ip_layer.haslayer(DHCP):
+                    pass  # Let DHCP traffic pass
+        elif pkt_ipv4_dst not in ipv4_network:
+            _log.warning("Traffic towards destination {:s} is not supported.".format(str(pkt_ipv4_dst)))
+            return
+        elif pkt_ipv4_dst == ipv4_network.broadcast_address:
+            _log.warning("Broadcast traffic ({:s}) is not supported.".format(str(pkt_ipv4_dst)))
+            return
+        elif pkt_ipv4_dst.is_multicast:
+            _log.warning("Multicast traffic ({:s}) is not supported.".format(str(pkt_ipv4_dst)))
+            return
 
         if ip_layer.haslayer(DHCP):  # https://tools.ietf.org/rfc/rfc2132.txt
             datapath_obj = msg.datapath
@@ -324,15 +339,18 @@ def process_event(packet_in_event):
 
                     # The controller sends the DHCP Offer packet to the host.
                     datapath_obj.send_msg(
-                        ofp_parser.OFPPacketOut(
+                        datapath_ofp_parser.OFPPacketOut(
                             datapath=msg.datapath,
-                            buffer_id=ofp.OFP_NO_BUFFER,
+                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
                             in_port=pkt_in_port,
-                            actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_offer))],
+                            actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_offer))],
                             data=bytes(dhcp_offer)
                         )
                     )
-                    globals.send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+                    globals.send_msg(
+                        datapath_ofp_parser.OFPBarrierRequest(msg.datapath),
+                        reply_cls=datapath_ofp_parser.OFPBarrierReply
+                    )
 
                 elif dhcp_layer_options['message-type'] is 3:  # A DHCP Request packet was received
                     try:
@@ -373,15 +391,18 @@ def process_event(packet_in_event):
                         dhcp_ack = dhcp_ack / pad
 
                         datapath_obj.send_msg(
-                            ofp_parser.OFPPacketOut(
+                            datapath_ofp_parser.OFPPacketOut(
                                 datapath=msg.datapath,
-                                buffer_id=ofp.OFP_NO_BUFFER,
+                                buffer_id=datapath_ofp.OFP_NO_BUFFER,
                                 in_port=pkt_in_port,
-                                actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_ack))],
+                                actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_ack))],
                                 data=bytes(dhcp_ack)
                             )
                         )
-                        globals.send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+                        globals.send_msg(
+                            datapath_ofp_parser.OFPBarrierRequest(msg.datapath),
+                            reply_cls=datapath_ofp_parser.OFPBarrierReply
+                        )
 
                     except database.ClientNotRegistered:
                         dhcp_nak = Ether(src=str(mac_service), dst=pkt.src) \
@@ -401,15 +422,18 @@ def process_event(packet_in_event):
                         )
 
                         datapath_obj.send_msg(
-                            ofp_parser.OFPPacketOut(
+                            datapath_ofp_parser.OFPPacketOut(
                                 datapath=msg.datapath,
-                                buffer_id=ofp.OFP_NO_BUFFER,
+                                buffer_id=datapath_ofp.OFP_NO_BUFFER,
                                 in_port=pkt_in_port,
-                                actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_nak))],  #
+                                actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_nak))],
                                 data=bytes(dhcp_nak)
                             )
                         )
-                        globals.send_msg(ofp_parser.OFPBarrierRequest(msg.datapath), reply_cls=ofp_parser.OFPBarrierReply)
+                        globals.send_msg(
+                            datapath_ofp_parser.OFPBarrierRequest(msg.datapath),
+                            reply_cls=datapath_ofp_parser.OFPBarrierReply
+                        )
 
         elif ip_layer.haslayer(ICMP):
             datapath_obj = msg.datapath
@@ -430,11 +454,11 @@ def process_event(packet_in_event):
                              / Raw(data_layer.load)
 
                 datapath_obj.send_msg(
-                    ofp_parser.OFPPacketOut(
+                    datapath_ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
-                        buffer_id=ofp.OFP_NO_BUFFER,
+                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
                         in_port=pkt_in_port,
-                        actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
+                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
                         data=bytes(icmp_reply)
                     )
                 )
@@ -448,14 +472,6 @@ def process_event(packet_in_event):
                     host_a_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
                     host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
 
-                    if (host_a_entity_id, host_b_entity_id) in globals.mapped_services["IPv4"]["ICMP"]:
-                        _log.error(
-                            "ICMPv4 service between {:s} and {:s} is already implemented.".format(
-                                str(host_a_entity_id), str(host_b_entity_id)
-                            )
-                        )
-                        return
-
                     # Construct a BiDirectional Path between Host A and Host B.
                     bidirectional_path = sector.construct_bidirectional_path(host_a_entity_id, host_b_entity_id)
 
@@ -468,16 +484,17 @@ def process_event(packet_in_event):
                     # Activating the ICMP service between hosts in the same sector.
                     services.icmpv4_flow_activation(bidirectional_path, mpls_label)
 
-
-
                     # Reinsert the ICMP packet into the OpenFlow Pipeline, in order to properly process it.
                     msg.datapath.send_msg(
-                        ofp_parser.OFPPacketOut(
+                        datapath_ofp_parser.OFPPacketOut(
                             datapath=msg.datapath,
-                            buffer_id=ofp.OFP_NO_BUFFER,
+                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
                             in_port=pkt_in_port,
                             actions=[
-                                ofp_parser.OFPActionOutput(port=ofp.OFPP_TABLE, max_len=len(msg.data)),
+                                datapath_ofp_parser.OFPActionOutput(
+                                    port=datapath_ofp.OFPP_TABLE,
+                                    max_len=len(msg.data)
+                                ),
                             ],
                             data=msg.data
                         )
@@ -494,8 +511,8 @@ def process_event(packet_in_event):
 
                 if host_not_found_in_sector:
                     try:
-                        # If the target host does not exist in the same sector, it is necessary to start a parallel process
-                        #  which will implement the cross-sector ICMP service between the hosts.
+                        # If the target host does not exist in the same sector, it is necessary to start a parallel
+                        #  process which will implement the cross-sector ICMP service between the hosts.
 
                         addr_info = central.query_address_info(ipv4=pkt_ipv4_dst)
                         raise AssertionError(
@@ -556,16 +573,88 @@ def process_event(packet_in_event):
                                 / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='name-error')
 
                 datapath_obj.send_msg(
-                    ofp_parser.OFPPacketOut(
+                    datapath_ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
-                        buffer_id=ofp.OFP_NO_BUFFER,
+                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
                         in_port=pkt_in_port,
-                        actions=[ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dns_reply))],
+                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dns_reply))],
                         data=bytes(dns_reply)
                     )
                 )
 
-        # elif ip_layer.haslayer(UDP) or ip_layer.haslayer(TCP):
+        elif ip_layer.haslayer(IP):
+
+            if ip_layer.dst == str(ipv4_service):
+                return
+
+            elif pkt_ipv4_dst in ipv4_network:  # If the destination IP belongs to the network.
+                # Opens a bi-directional tunnel to target, using the same path in both directions.
+                host_not_found_in_sector = False
+                try:
+                    addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
+                    target_switch_id = addr_info_dst["datapath"]
+                    target_switch_port = addr_info_dst["port"]
+                    host_a_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
+                    host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
+                    host_a_entity = sector.query_entity(host_a_entity_id)
+                    host_b_entity = sector.query_entity(host_b_entity_id)
+
+                    # Construct a BiDirectional Path between Host A and Host B.
+                    unidirectional_path = sector.construct_unidirectional_path(host_a_entity_id, host_b_entity_id)
+
+                    # Allocate MPLS label for tunnel
+                    if len(unidirectional_path) >= 3:
+                        mpls_label = globals.alloc_mpls_label_id()
+                    else:
+                        mpls_label = None
+
+                    # Activating the IPv4 generic service between hosts in the same sector.
+                    services.ipv4_generic_flow_activation(unidirectional_path, mpls_label)
+
+                    # Reinsert the IPv4 packet into the OpenFlow Pipeline, in order to properly process it.
+                    msg.datapath.send_msg(
+                        datapath_ofp_parser.OFPPacketOut(
+                            datapath=msg.datapath,
+                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
+                            in_port=pkt_in_port,
+                            actions=[
+                                datapath_ofp_parser.OFPActionOutput(
+                                    port=datapath_ofp.OFPP_TABLE,
+                                    max_len=len(msg.data)
+                                ),
+                            ],
+                            data=msg.data
+                        )
+                    )
+
+                    _log.info(
+                        "IPv4 service tunnel for generic traffic, opened between hosts {:s} and {:s}.".format(
+                            host_a_entity.hostname, host_b_entity.hostname
+                        )
+                    )
+
+                except database.AddressNotRegistered:
+                    host_not_found_in_sector = True
+
+                if host_not_found_in_sector:
+                    try:
+                        # If the target host does not exist in the same sector, it is necessary to start a parallel
+                        #  process which will implement the cross-sector ICMP service between the hosts.
+
+                        addr_info = central.query_address_info(ipv4=pkt_ipv4_dst)
+                        raise AssertionError(
+                            "Support for hosts in other sectors, is Not implemented {}.".format(str(addr_info))
+                        )
+
+                    except central.NoResultsAvailable:
+                        _log.error("Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
+
+            else:
+                _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
+
+
+
+        # elif ip_layer.haslayer(TCP):
         #     # If the packet is not DHCP, ARP, DNS or ICMP, then it is probably a regular data packet.
         #     # Lets create two uni-directional tunnels for TCP and UDP traffic, where the implemented QoS metrics will
         #     #   depend upon the service characteristics.
@@ -623,6 +712,7 @@ def process_event(packet_in_event):
         #             host_a_entity.hostname, host_b_entity.hostname
         #         )
         #     )
+
 
         else:
             _log.warning(

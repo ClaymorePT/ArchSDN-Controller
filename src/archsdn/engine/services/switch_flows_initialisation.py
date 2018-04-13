@@ -178,7 +178,7 @@ def init_switch_flows(switch_obj):
         cookie=globals.alloc_cookie_id(),
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_3_PRIORITY,
+        priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
         flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_ARP,
@@ -248,7 +248,7 @@ def init_switch_flows(switch_obj):
         cookie=globals.alloc_cookie_id(),
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_3_PRIORITY,
+        priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
         flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_type=ether.ETH_TYPE_IP,
