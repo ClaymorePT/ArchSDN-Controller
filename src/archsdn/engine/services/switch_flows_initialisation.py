@@ -34,8 +34,15 @@ def init_switch_flows(switch_obj):
     #  1 -> Disable all ports, except for the control
     #  2 -> Clear all flow tables, group table and meter table
 
-    # Stage 1 -> Disable all switching ports
+    switch_obj.send_msg(
+        ofp_parser.OFPRoleRequest(
+            switch_obj,
+            ofp.OFPCR_ROLE_MASTER,
+            0)
+    )
+    globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
+    # Stage 1 -> Disable all switching ports
     for port_obj in switch_obj.ports.values():
         switch_obj.send_msg(
             ofp_parser.OFPPortMod(
@@ -52,12 +59,10 @@ def init_switch_flows(switch_obj):
     switch_obj.send_msg(  # Removes all flows registered in this switch.
         ofp_parser.OFPFlowMod(
             datapath=switch_obj,
+            cookie=0,
+            cookie_mask=0xFFFFFFFFFFFFFFFF,
             table_id=ofp.OFPTT_ALL,
             command=ofp.OFPFC_DELETE,
-            buffer_id=ofp.OFP_NO_BUFFER,
-            out_port=ofp.OFPP_ANY,
-            out_group=ofp.OFPG_ANY,
-            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP
         )
     )
 

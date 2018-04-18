@@ -120,14 +120,19 @@ class Switch(Entity):
         assert isinstance(config, Switch.PORT_CONFIG), "config is not Switch.PORT_CONFIG. Got {:s}".format(repr(config))
         assert isinstance(state, Switch.PORT_STATE), "state is not Switch.PORT_STATE. Got {:s}".format(repr(state))
         assert isinstance(curr, Switch.PORT_FEATURES), "curr is not Switch.PORT_FEATURES. Got {:s}".format(repr(curr))
-        assert isinstance(advertised, Switch.PORT_FEATURES), "advertised is not Switch.PORT_FEATURES. Got {:s}".format(repr(advertised))
-        assert isinstance(supported, Switch.PORT_FEATURES), "supported is not Switch.PORT_FEATURES. Got {:s}".format(repr(supported))
+        assert isinstance(advertised, Switch.PORT_FEATURES), \
+            "advertised is not Switch.PORT_FEATURES. Got {:s}".format(repr(advertised))
+        assert isinstance(supported, Switch.PORT_FEATURES), \
+            "supported is not Switch.PORT_FEATURES. Got {:s}".format(repr(supported))
         assert isinstance(peer, Switch.PORT_FEATURES), "peer is not Switch.PORT_FEATURES. Got {:s}".format(repr(peer))
         assert isinstance(max_speed, int), "max_speed is not int. Got {:s}".format(repr(max_speed))
         assert 0 <= max_speed <= 0xFFFFFFFFFFFFFFFF, "0 <= max_speed <= 0xFFFFFFFFFFFFFFFF. Got {:d}".format(
             max_speed)
-        assert isinstance(curr_speed, int), "curr_speed is not int. Got {:s}".format(repr(curr_speed))
-        assert 0 <= curr_speed <= max_speed, "0 <= curr_speed <= max_speed. Got {:d}".format(curr_speed)
+        # TODO: This is commented because I have tested ArchSDN with mininet and it seems that OVS does
+        #  not properly report the max_speed. max_speed is always zero, and curr_speed is the link speed.
+        #assert isinstance(curr_speed, int), "curr_speed is not int. Got {:s}".format(repr(curr_speed))
+        #assert 0 <= curr_speed <= max_speed, \
+        #    "0 <= curr_speed({:d}) <= max_speed ({:d}) assertion is false.".format(curr_speed, max_speed)
 
         if port_no in self.__ports:
             raise PortAlreadyRegistered()

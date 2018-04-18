@@ -125,6 +125,11 @@ def process_event(packet_in_event):
                     )
                     # Activate segregation flow at the switch port for the detected sector switch
                     services.switch_segregation_flow_activation(datapath_obj, pkt_in_port)
+                    _log.debug(
+                        "Connecting switch {:016X} using port {:d} to switch {:016X} at port {:d}".format(
+                            datapath_id, sender_datapath_id, pkt_in_port, sender_port_out
+                        )
+                    )
 
         else:
             _log.warning(
@@ -142,73 +147,74 @@ def process_event(packet_in_event):
             )
         )
         if arp_layer.ptype == ether.ETH_TYPE_IP:  # Answering to ARPv4 Packet
-            if IPv4Address(arp_layer.psrc) in ipv4_network and IPv4Address(arp_layer.pdst) in ipv4_network:
-                if arp_layer.pdst == str(ipv4_service):  # If the MAC Address is the Service MAC
-                    _log.debug("Arp target {:s} is the controller of this sector. ".format(arp_layer.pdst))
-                    mac_target_str = mac_service
-                else:
-                    try:
-                        try:
-                            #  If the target is registered in this sector...
-                            target_client_info = database.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
-
-                            _log.debug(
-                                "Target {:s} belongs to this sector. "
-                                "It is registered with client id {:d}, MAC {:s} at switch {:016X}, connected at port {:d}.".format(
-                                    arp_layer.pdst,
-                                    target_client_info["client_id"],
-                                    str(target_client_info["mac"]),
-                                    target_client_info["datapath"],
-                                    target_client_info["port"],
-                                )
-                            )
-                            mac_target_str = target_client_info["mac"]
-                        except database.AddressNotRegistered:
-                            # The target is not registered in the sector.
-                            # Ask the central manager for the controller id and client id.
-                            # Then ask the respective controller for information about its client.
-                            address_info = central.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
-                            _log.debug(
-                                "Target {:s} with client id {:d} belongs to controller {:s} sector.".format(
-                                    arp_layer.pdst,
-                                    address_info.client_id,
-                                    address_info.controller_id
-                                )
-                            )
-                            mac_target_str = None
-
-                    except central.NoResultsAvailable:
-                        _log.debug("Target {:s} is not registered at the central manager.".format(arp_layer.pdst))
-                        mac_target_str = None
-
-                # Checks for the existence of the target in the network. If it exists, send back the ARP Reply
-                if mac_target_str:
-                    datapath_obj = msg.datapath
-                    arp_response = Ether(src=str(mac_target_str), dst=pkt.src) \
-                        / ARP(
-                            hwtype=arp_layer.hwtype,
-                            ptype=arp_layer.ptype,
-                            hwlen=arp_layer.hwlen,
-                            plen=arp_layer.plen,
-                            op="is-at",
-                            hwsrc=mac_target_str.packed,
-                            psrc=arp_layer.pdst,
-                            hwdst=EUI(pkt.src).packed,
-                            pdst=arp_layer.psrc
-                        )
-                    datapath_obj.send_msg(
-                        datapath_ofp_parser.OFPPacketOut(
-                            datapath=msg.datapath,
-                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                            in_port=pkt_in_port,
-                            actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(arp_response))],
-                            data=bytes(arp_response)
-                        )
-                    )
-            else:
+            if not (IPv4Address(arp_layer.psrc) in ipv4_network and IPv4Address(arp_layer.pdst) in ipv4_network):
                 _log.debug(
                     "Ignoring ARP Packet with incorrect IPv4 network addresses. Source: {:s}; Destination: {:s}".format(
                         arp_layer.psrc, arp_layer.pdst
+                    )
+                )
+                return
+
+            if arp_layer.pdst == str(ipv4_service):  # If the MAC Address is the Service MAC
+                _log.debug("Arp target {:s} is the controller of this sector. ".format(arp_layer.pdst))
+                mac_target_str = mac_service
+            else:
+                try:
+                    try:
+                        #  If the target is registered in this sector...
+                        target_client_info = database.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+
+                        _log.debug(
+                            "Target {:s} belongs to this sector. "
+                            "It is registered with client id {:d}, MAC {:s} at switch {:016X}, connected at port {:d}.".format(
+                                arp_layer.pdst,
+                                target_client_info["client_id"],
+                                str(target_client_info["mac"]),
+                                target_client_info["datapath"],
+                                target_client_info["port"],
+                            )
+                        )
+                        mac_target_str = target_client_info["mac"]
+                    except database.AddressNotRegistered:
+                        # The target is not registered in the sector.
+                        # Ask the central manager for the controller id and client id.
+                        # Then ask the respective controller for information about its client.
+                        address_info = central.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+                        _log.debug(
+                            "Target {:s} with client id {:d} belongs to controller {:s} sector.".format(
+                                arp_layer.pdst,
+                                address_info.client_id,
+                                address_info.controller_id
+                            )
+                        )
+                        mac_target_str = None
+
+                except central.NoResultsAvailable:
+                    _log.debug("Target {:s} is not registered at the central manager.".format(arp_layer.pdst))
+                    mac_target_str = None
+
+            # Checks for the existence of the target in the network. If it exists, send back the ARP Reply
+            if mac_target_str:
+                datapath_obj = msg.datapath
+                arp_response = Ether(src=str(mac_target_str), dst=pkt.src) \
+                    / ARP(
+                        hwtype=arp_layer.hwtype,
+                        ptype=arp_layer.ptype,
+                        hwlen=arp_layer.hwlen,
+                        plen=arp_layer.plen,
+                        op="is-at",
+                        hwsrc=mac_target_str.packed,
+                        psrc=arp_layer.pdst,
+                        hwdst=EUI(pkt.src).packed,
+                        pdst=arp_layer.psrc
+                    )
+                datapath_obj.send_msg(
+                    datapath_ofp_parser.OFPPacketOut(
+                        datapath=msg.datapath,
+                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
+                        in_port=datapath_ofp.OFPP_CONTROLLER,
+                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(arp_response))],
+                        data=bytes(arp_response)
                     )
                 )
         else:
@@ -349,7 +355,7 @@ def process_event(packet_in_event):
                         datapath_ofp_parser.OFPPacketOut(
                             datapath=msg.datapath,
                             buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                            in_port=pkt_in_port,
+                            in_port=datapath_ofp.OFPP_CONTROLLER,
                             actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_offer))],
                             data=bytes(dhcp_offer)
                         )
@@ -401,7 +407,7 @@ def process_event(packet_in_event):
                             datapath_ofp_parser.OFPPacketOut(
                                 datapath=msg.datapath,
                                 buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                                in_port=pkt_in_port,
+                                in_port=datapath_ofp.OFPP_CONTROLLER,
                                 actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_ack))],
                                 data=bytes(dhcp_ack)
                             )
@@ -432,7 +438,7 @@ def process_event(packet_in_event):
                             datapath_ofp_parser.OFPPacketOut(
                                 datapath=msg.datapath,
                                 buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                                in_port=pkt_in_port,
+                                in_port=datapath_ofp.OFPP_CONTROLLER,
                                 actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dhcp_nak))],
                                 data=bytes(dhcp_nak)
                             )
@@ -464,7 +470,7 @@ def process_event(packet_in_event):
                     datapath_ofp_parser.OFPPacketOut(
                         datapath=msg.datapath,
                         buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                        in_port=pkt_in_port,
+                        in_port=datapath_ofp.OFPP_CONTROLLER,
                         actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
                         data=bytes(icmp_reply)
                     )
