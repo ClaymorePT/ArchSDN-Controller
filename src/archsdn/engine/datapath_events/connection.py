@@ -44,55 +44,56 @@ def process_event(dp_event):
 
         def __send_discovery_beacon():
             try:
-                ports = datapath_obj.ports
                 _log.info("Starting beacon for Switch {:016X}".format(datapath_id))
 
                 while datapath_obj.is_active:
-                    for port_no in ports:
-                        if not (ports[port_no].state & ofp.OFPPS_LINK_DOWN) and \
-                                (
-                                    (
-                                        sector.is_port_connected(datapath_id, port_no) and
-                                        isinstance(
-                                            sector.query_connected_entity_id(datapath_id, port_no),
-                                            entities.Sector
-                                        )
-                                    ) or
-                                    (
-                                        not sector.is_port_connected(datapath_id, port_no)
-                                    )
-                                ):
+                    switch = sector.query_entity(datapath_id)
+                    ports = switch.ports
 
-                            hash_val = c_uint64(hash((datapath_id, port_no))).value
-                            if hash_val not in globals.beacons_hash_table:
-                                globals.beacons_hash_table[hash_val] = (datapath_id, port_no)
-                            beacon = Ether(
-                                src=str(mac_service),
-                                dst="FF:FF:FF:FF:FF:FF",
-                                type=0xAAAA
-                            ) / Raw(
-                                load=struct.pack(
-                                    "!H16s8s",
-                                    1, controller_uuid.bytes,
-                                    hash_val.to_bytes(8, byteorder='big')
-                                )
-                            )
+                    def filter_port(port_no):
+                        if not (0 < port_no <= ofp.OFPP_MAX):
+                            return False
+                        if ports[port_no]["state"] & ofp.OFPPS_LINK_DOWN:
+                            return False
+                        if sector.is_port_connected(datapath_id, port_no) and \
+                            isinstance(
+                                sector.query_entity(sector.query_connected_entity_id(datapath_id, port_no)),
+                                (entities.Switch, entities.Host)
+                            ):
+                            return False
+                        return True
 
-                            _log.debug(
-                                "Sending beacon through port {:d} of switch {:016X} with hash value {:X}".format(
-                                    port_no, datapath_id, hash_val
-                                )
+                    for port_no in filter(filter_port, ports):
+                        hash_val = c_uint64(hash((datapath_id, port_no))).value
+                        if hash_val not in globals.beacons_hash_table:
+                            globals.beacons_hash_table[hash_val] = (datapath_id, port_no)
+                        beacon = Ether(
+                            src=str(mac_service),
+                            dst="FF:FF:FF:FF:FF:FF",
+                            type=0xAAAA
+                        ) / Raw(
+                            load=struct.pack(
+                                "!H16s8s",
+                                1, controller_uuid.bytes,
+                                hash_val.to_bytes(8, byteorder='big')
                             )
+                        )
 
-                            datapath_obj.send_msg(
-                                ofp_parser.OFPPacketOut(
-                                    datapath=datapath_obj,
-                                    buffer_id=ofp.OFP_NO_BUFFER,
-                                    in_port=port_no,
-                                    actions=[ofp_parser.OFPActionOutput(port=port_no)],
-                                    data=bytes(beacon)
-                                )
+                        _log.debug(
+                            "Sending beacon through port {:d} ({:s}) of switch {:016X} with hash value {:X}".format(
+                                port_no, ports[port_no]["name"], datapath_id, hash_val
                             )
+                        )
+
+                        datapath_obj.send_msg(
+                            ofp_parser.OFPPacketOut(
+                                datapath=datapath_obj,
+                                buffer_id=ofp.OFP_NO_BUFFER,
+                                in_port=ofp.OFPP_CONTROLLER,
+                                actions=[ofp_parser.OFPActionOutput(port=port_no)],
+                                data=bytes(beacon)
+                            )
+                        )
                     hub.sleep(3)
 
                 hash_vals = tuple(
@@ -104,13 +105,14 @@ def process_event(dp_event):
                 for value in hash_vals:
                     del globals.beacons_hash_table[value]
 
+                del globals.topology_beacons[datapath_id]
                 _log.warning("Switch {:016X} is no longer active. Beacon manager is terminating.".format(datapath_id))
 
             except Exception:
                 custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
-        if sector.is_entity_registered(datapath_id):
-            sector.remove_entity(datapath_id)
+        assert not sector.is_entity_registered(datapath_id), \
+            "Switch with ID {:d} is already registered.".format(datapath_id)
 
         switch = entities.Switch(
             id=datapath_id,
@@ -118,7 +120,6 @@ def process_event(dp_event):
             control_port=6631,
             of_version=dp_event.dp.ofproto.OFP_VERSION
         )
-
         for port in dp_event.ports:
             switch.register_port(
                 port_no=port.port_no,
@@ -142,49 +143,31 @@ def process_event(dp_event):
             "A beacon was already active for switch {:016X}.".format(datapath_id)
 
         globals.topology_beacons[datapath_id] = hub.spawn(__send_discovery_beacon)
-        _log.info("Switch Connect Event: {:s}".format(str(dp_event.__dict__)))
+        _log.debug("Switch Connect Event: {:s}".format(str(dp_event.__dict__)))
 
     else:  # If Switch is disconnecting...
-        if sector.is_entity_registered(datapath_id):
-            # Query scenarios which use this switch and initiate process establish new paths.
-            if datapath_id in globals.topology_beacons:
-                globals.topology_beacons[datapath_id].cancel()
+        assert sector.is_entity_registered(datapath_id), \
+            "Trying to disconnect an unregistered Switch: {:016X}".format(datapath_id)
 
-            sector.remove_entity(datapath_id)
-            database.remove_datapath(datapath_id)
+        # Kill services in the sector which use this Switch
+        services_to_kill = []
+        for service_type in globals.mapped_services["IPv4"]:
+            for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
+                if globals.mapped_services["IPv4"][service_type][service_tuple_id].has_entity(datapath_id):
+                    services_to_kill.append(("IPv4", service_type, service_tuple_id))
+        for service_tuple_id in globals.mapped_services["MPLS"]:
+            if globals.mapped_services["MPLS"][service_tuple_id].has_entity(datapath_id):
+                services_to_kill.append(("MPLS", None, service_tuple_id))
 
-            flows_to_remove = []
-            if datapath_id in globals.mapped_services:
-                switch_mapped_services = globals.mapped_services[datapath_id]
-                for source_target in switch_mapped_services["ICMP4"]:
-                    (tunnel_id, _, cookies) = switch_mapped_services["ICMP4"][source_target]
-                    assert tunnel_id in globals.active_sector_scenarios, \
-                        "tunnel_id {:d} not in __active_sector_tunnels".format(tunnel_id)
-                    del globals.active_sector_scenarios[tunnel_id]
-                    flows_to_remove = flows_to_remove + cookies
+        for (service_layer, service_type, service_tuple_id) in services_to_kill:
+            if service_layer == "IPv4":
+                del globals.mapped_services[service_layer][service_type][service_tuple_id]
+            elif service_layer == "MPLS":
+                del globals.mapped_services[service_layer][service_tuple_id]
 
-                for source_target in switch_mapped_services["IPv4"]:
-                    (tunnel_id, _, cookies) = switch_mapped_services["IPv4"][source_target]
-                    assert tunnel_id in globals.active_sector_scenarios, \
-                        "tunnel_id {:d} not in __active_sector_tunnels".format(tunnel_id)
-                    del globals.active_sector_scenarios[tunnel_id]
-                    flows_to_remove = flows_to_remove + cookies
+        sector.remove_entity(datapath_id)
+        database.remove_datapath(datapath_id)
 
-                for port_no in switch_mapped_services["MPLS"]:
-                    for label_id in switch_mapped_services["MPLS"][port_no]:
-                        (tunnel_id, _, cookies) = switch_mapped_services["IP4"][port_no][label_id]
-                        assert tunnel_id in globals.active_sector_scenarios, \
-                            "tunnel_id {:d} not in __active_sector_tunnels".format(tunnel_id)
-                        del globals.active_sector_scenarios[tunnel_id]
-                        flows_to_remove = flows_to_remove + cookies
+        _log.info("Switch Disconnect Event: {:s}".format(str(dp_event.__dict__)))
 
-            for cookie_id in flows_to_remove:
-                assert cookie_id in globals.active_flows, "cookie_id {:d} not in __active_flows".format(cookie_id)
-                del globals.active_flows[cookie_id]
-
-            del globals.mapped_services[datapath_id]
-
-            _log.info("Switch Disconnect Event: {:s}".format(str(dp_event.__dict__)))
-        else:
-            _log.warning("Trying to disconnect an unregistered Switch: {:016X}".format(datapath_id))
 

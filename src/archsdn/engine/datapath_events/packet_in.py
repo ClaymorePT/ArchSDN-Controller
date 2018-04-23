@@ -125,6 +125,9 @@ def process_event(packet_in_event):
                     )
                     # Activate segregation flow at the switch port for the detected sector switch
                     services.switch_segregation_flow_activation(datapath_obj, pkt_in_port)
+
+                    sender_datapath_obj = globals.get_datapath_obj(sender_datapath_id)
+                    services.switch_segregation_flow_activation(sender_datapath_obj, sender_port_out)
                     _log.debug(
                         "Connecting switch {:016X} using port {:d} to switch {:016X} at port {:d}".format(
                             datapath_id, sender_datapath_id, pkt_in_port, sender_port_out
@@ -184,7 +187,7 @@ def process_event(packet_in_event):
                             "Target {:s} with client id {:d} belongs to controller {:s} sector.".format(
                                 arp_layer.pdst,
                                 address_info.client_id,
-                                address_info.controller_id
+                                str(address_info.controller_id)
                             )
                         )
                         mac_target_str = None

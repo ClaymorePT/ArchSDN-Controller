@@ -100,9 +100,24 @@ def process_event(port_change_event):
                 max_speed=port.max_speed
             )
 
+            # Removes all flows registered in this switch, registered at table PORT_SEGREGATION_TABLE
+            #   and matching port_no.
+            datapath_obj.send_msg(
+                ofp_parser.OFPFlowMod(
+                    datapath=datapath_obj,
+                    table_id=globals.PORT_SEGREGATION_TABLE,
+                    command=ofp.OFPFC_DELETE,
+                    match=ofp_parser.OFPMatch(in_port=port_no)
+                )
+            )
+            globals.send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
+
         elif reason_num == 1:
             if port_no in switch.ports:
+                connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
+                sector.disconnect_entities(datapath_id, connected_entity_id, port_no)
                 switch.remove_port(port_no)
+
             else:
                 _log.warning(
                     "Port {:d} not previously registered at Switch {:016X}.".format(
@@ -110,66 +125,114 @@ def process_event(port_change_event):
                     )
                 )
 
+            # Kill services in the sector which use this port
+            connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
+            services_to_kill = []
+            for service_type in globals.mapped_services["IPv4"]:
+                for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
+                    if globals.mapped_services["IPv4"][service_type][service_tuple_id].uses_edge(
+                            datapath_id, connected_entity_id, port_no
+                    ):
+                        services_to_kill.append(("IPv4", service_type, service_tuple_id))
+
+            for service_tuple_id in globals.mapped_services["MPLS"]:
+                if globals.mapped_services["MPLS"][service_tuple_id].uses_edge(
+                        datapath_id, connected_entity_id, port_no
+                ):
+                    services_to_kill.append(("MPLS", None, service_tuple_id))
+
+            for (service_layer, service_type, service_tuple_id) in services_to_kill:
+                if service_layer == "IPv4":
+                    del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                elif service_layer == "MPLS":
+                    del globals.mapped_services[service_layer][service_tuple_id]
+
+            # Removes all flows registered in this switch, registered at table PORT_SEGREGATION_TABLE
+            #   and matching port_no.
+            datapath_obj.send_msg(
+                ofp_parser.OFPFlowMod(
+                    datapath=datapath_obj,
+                    table_id=globals.PORT_SEGREGATION_TABLE,
+                    command=ofp.OFPFC_DELETE,
+                    match=ofp_parser.OFPMatch(in_port=port_no)
+                )
+            )
+            globals.send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
+
         else:
-            port = datapath_obj.ports[port_no]
+            # For some reason, OpenVSwitch sends events about ports that have already been removed.
+            if port_no in datapath_obj.ports and port_no in switch.ports:
+                port = datapath_obj.ports[port_no]
 
-            old_config = switch.ports[port_no]['config']
-            new_config = entities.Switch.PORT_CONFIG(port.config)
-            if old_config != new_config:
-                _log.warning(
-                    "Port {:d} config at Switch {:016X} changed from {:s} to {:s}".format(
-                        port_no, datapath_id, str(old_config), str(new_config)
-                    )
-                )
-                switch.ports[port_no]['config'] = new_config
-
-            old_state = switch.ports[port_no]['state']
-            new_state = entities.Switch.PORT_STATE(port.state)
-            if old_state != new_state:  # If the port state has changed...
-                if entities.Switch.PORT_STATE.OFPPS_LINK_DOWN in new_state:  # Port link state is Down...
-
-                    # Removes all flows at __PORT_SEGREGATION_TABLE matching the removed port
-                    datapath_obj.send_msg(
-                        ofp_parser.OFPFlowMod(
-                            datapath=datapath_obj,
-                            table_id=globals.PORT_SEGREGATION_TABLE,
-                            command=ofp.OFPFC_DELETE,
-                            out_port=ofp.OFPP_ANY,
-                            out_group=ofp.OFPG_ANY,
-                            flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-                            match=ofp_parser.OFPMatch(in_port=port_no)
+                old_config = switch.ports[port_no]['config']
+                new_config = entities.Switch.PORT_CONFIG(port.config)
+                if old_config != new_config:
+                    _log.warning(
+                        "Port {:d} config at Switch {:016X} changed from {:s} to {:s}".format(
+                            port_no, datapath_id, str(old_config), str(new_config)
                         )
                     )
-                    globals.send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
+                    switch.ports[port_no]['config'] = new_config
 
-                    def flow_filter(elem):
-                        (flow_obj, switch_id) = elem
-                        if switch_id != datapath_id:
-                            return False
-                        if flow_obj.match:
-                            for match_field in flow_obj.match.fields:
-                                return type(match_field) is ofp_parser.MTInPort and match_field.value == port_no
+                old_state = switch.ports[port_no]['state']
+                new_state = entities.Switch.PORT_STATE(port.state)
+                if old_state != new_state:  # If the port state has changed...
+                    _log.warning(
+                        "Port {:d} state at Switch {:016X} changed from {:s} to {:s}".format(
+                            port_no, datapath_id, str(old_state), str(new_state)
+                        )
+                    )
 
-                    filtered_flows = tuple(filter(flow_filter, globals.active_flows.items()))
-                    for (flow, _) in filtered_flows:
-                        _log.warning(
-                            "Flow with ID {:d} configured at Switch {:016X} for port {:d} was removed".format(
-                                flow.cookie, port_no, datapath_id
+                    if entities.Switch.PORT_STATE.OFPPS_LINK_DOWN in new_state:  # Port link state is Down...
+                        if sector.is_port_connected(datapath_id, port_no):
+                            # Kill services in the sector which use this port
+                            connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
+                            services_to_kill = []
+                            for service_type in globals.mapped_services["IPv4"]:
+                                for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
+                                    if globals.mapped_services["IPv4"][service_type][service_tuple_id].uses_edge(
+                                            datapath_id, connected_entity_id, port_no
+                                    ):
+                                        services_to_kill.append(("IPv4", service_type, service_tuple_id))
+
+                            for service_tuple_id in globals.mapped_services["MPLS"]:
+                                if globals.mapped_services["MPLS"][service_tuple_id].uses_edge(
+                                        datapath_id, connected_entity_id, port_no
+                                ):
+                                    services_to_kill.append(("MPLS", None, service_tuple_id))
+
+                            for (service_layer, service_type, service_tuple_id) in services_to_kill:
+                                if service_layer == "IPv4":
+                                    del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                                elif service_layer == "MPLS":
+                                    del globals.mapped_services[service_layer][service_tuple_id]
+
+                            # Removes all flows at PORT_SEGREGATION_TABLE matching the removed port
+                            datapath_obj.send_msg(
+                                ofp_parser.OFPFlowMod(
+                                    datapath=datapath_obj,
+                                    table_id=globals.PORT_SEGREGATION_TABLE,
+                                    out_port=ofp.OFPP_ANY,
+                                    out_group=ofp.OFPG_ANY,
+                                    command=ofp.OFPFC_DELETE,
+                                    match=ofp_parser.OFPMatch(in_port=port_no)
+                                )
                             )
-                        )
-                        del globals.active_flows[flow.cookie]
-                        globals.free_cookie_id(flow.cookie)
+                            globals.send_msg(
+                                ofp_parser.OFPBarrierRequest(datapath_obj),
+                                reply_cls=ofp_parser.OFPBarrierReply
+                            )
 
-                elif entities.Switch.PORT_STATE.OFPPS_LIVE in new_state: # Port link state is Live...
-                    # TODO: This event could be used to try and reestablish previous scenarios that were once lost...
-                    pass
+                            sector.disconnect_entities(datapath_id, connected_entity_id, port_no)
 
-                _log.warning(
-                    "Port {:d} state at Switch {:016X} changed from {:s} to {:s}".format(
-                        port_no, datapath_id, str(old_state), str(new_state)
-                    )
-                )
-                switch.ports[port_no]['state'] = new_state
+                    elif entities.Switch.PORT_STATE.OFPPS_LIVE in new_state:  # Port link state is Live...
+                        # TODO: Do this.. maybe
+                        # This event could be used to try and reestablish previous scenarios that were once lost...
+                        pass
+
+                    switch.ports[port_no]['state'] = new_state
+
+
 
     else:
         raise Exception("Reason with value {:d} is unknown to specification.".format(reason_num))

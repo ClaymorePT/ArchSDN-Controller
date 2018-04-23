@@ -20,32 +20,46 @@ class __ICMPv4Service(Service):
 
     def __del__(self):
         for flow in self.__scenario_flows:
-            switch_obj = flow.datapath
+            switch_obj = globals.get_datapath_obj(flow.datapath.id)
             if switch_obj.is_active:
                 switch_ofp_parser = switch_obj.ofproto_parser
                 switch_ofp = switch_obj.ofproto
-                globals.send_msg(  # Removes the registered flow from this switch.
-                    switch_ofp_parser.OFPFlowMod(
+                _log.debug("Removing flow with cookie ID 0x{:x} - {:s}.".format(flow.cookie, str(flow)))
+
+                flow_deleter = switch_ofp_parser.OFPFlowMod(
                         datapath=switch_obj,
-                        cookie=flow.cookie,
                         table_id=flow.table_id,
+                        priority=flow.priority,
                         command=switch_ofp.OFPFC_DELETE,
-                        flags=switch_ofp.OFPFF_SEND_FLOW_REM | switch_ofp.OFPFF_CHECK_OVERLAP
+                        out_port=switch_ofp.OFPP_ANY,
+                        out_group=switch_ofp.OFPG_ANY,
+                        match=flow.match,
                     )
+                _log.debug("flow deleter {:s}.".format(str(flow_deleter)))
+                switch_obj.send_msg(  # Removes the registered flow from this switch.
+                    flow_deleter
                 )
+                globals.send_msg(
+                    switch_ofp_parser.OFPBarrierRequest(switch_obj),
+                    reply_cls=switch_ofp_parser.OFPBarrierReply
+                )
+            del globals.active_flows[flow.cookie]
         globals.free_mpls_label_id(self.__mpls_label)
 
     @property
     def label(self):
         return self.__mpls_label
 
-    def uses_edge(self, node_a, node_b, output_port):
-        return self.__bidirectional_path.uses_edge((node_a, node_b, output_port))
+    def uses_edge(self, node_a_id, node_b_id, output_port):
+        return self.__bidirectional_path.uses_edge((node_a_id, node_b_id, output_port))
+
+    def has_entity(self, entity_id):
+        return self.__bidirectional_path.has_entity(entity_id)
 
 
 def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
     assert isinstance(bidirectional_path, sector.SectorPath), "bidirectional_path expected to be sector.SectorPath"
-    assert bidirectional_path.is_bidirectional(), "bidirectional_path expected to be a bidiretional sector.SectorPath"
+    assert bidirectional_path.is_bidirectional(), "bidirectional_path expected to be a bidirectional sector.SectorPath"
 
     entity_a_id = bidirectional_path.entity_a
     entity_b_id = bidirectional_path.entity_b
@@ -73,7 +87,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-            flags=single_switch_ofp.OFPFF_SEND_FLOW_REM | single_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_dst=str(host_b_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -94,7 +107,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-            flags=single_switch_ofp.OFPFF_SEND_FLOW_REM | single_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_dst=str(host_a_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -111,6 +123,10 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
 
         single_switch_obj.send_msg(side_a_flow)
         single_switch_obj.send_msg(side_b_flow)
+        globals.send_msg(
+            single_switch_ofp_parser.OFPBarrierRequest(single_switch_obj),
+            reply_cls=single_switch_ofp_parser.OFPBarrierReply
+        )
         tunnel_flows.append(side_a_flow)
         tunnel_flows.append(side_b_flow)
         globals.active_flows[side_a_flow.cookie] = (side_a_flow, unique_switch_id)
@@ -137,7 +153,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
                 priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
-                flags=middle_switch_ofp.OFPFF_SEND_FLOW_REM | middle_switch_ofp.OFPFF_CHECK_OVERLAP,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
                 ),
@@ -160,7 +175,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
                 priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
-                flags=middle_switch_ofp.OFPFF_SEND_FLOW_REM | middle_switch_ofp.OFPFF_CHECK_OVERLAP,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
                 ),
@@ -196,7 +210,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-            flags=side_a_switch_ofp.OFPFF_SEND_FLOW_REM | side_a_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_dst=str(host_b_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -212,7 +225,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 side_a_switch_ofp_parser.OFPInstructionGotoTable(table_id=globals.MPLS_FILTERING_TABLE),
             ]
         )
-        print("-" * 10, side_a_host_to_mpls_flow)
 
         # MPLS ingression flow
         side_a_mpls_flow_mod = side_a_switch_ofp_parser.OFPFlowMod(
@@ -221,7 +233,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
-            flags=side_a_switch_ofp.OFPFF_SEND_FLOW_REM | side_a_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_a_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -242,7 +253,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_3_MPLS_POP_PRIORITY,
-            flags=side_a_switch_ofp.OFPFF_SEND_FLOW_REM | side_a_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_a_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -264,7 +274,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_5_LAYER_4_SPECIFIC_PRIORITY,
-            flags=side_a_switch_ofp.OFPFF_SEND_FLOW_REM | side_a_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_src=str(host_b_entity_obj.mac), eth_dst=str(host_a_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -313,9 +322,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-            flags=side_b_switch_ofp.OFPFF_SEND_FLOW_REM | side_b_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_b_switch_ofp_parser.OFPMatch(
-                eth_dst=str(host_b_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
+                eth_dst=str(host_a_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
             ),
             instructions=[
@@ -337,7 +345,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
-            flags=side_b_switch_ofp.OFPFF_SEND_FLOW_REM | side_b_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_b_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -358,7 +365,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_3_MPLS_POP_PRIORITY,
-            flags=side_b_switch_ofp.OFPFF_SEND_FLOW_REM | side_b_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_b_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -380,7 +386,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_5_LAYER_4_SPECIFIC_PRIORITY,
-            flags=side_b_switch_ofp.OFPFF_SEND_FLOW_REM | side_b_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=side_b_switch_ofp_parser.OFPMatch(
                 eth_src=str(host_a_entity_obj.mac), eth_dst=str(host_b_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -465,7 +470,7 @@ def icmpv4_flow_activation(bidirectional_path, mpls_label):
     """
 
     assert isinstance(bidirectional_path, sector.SectorPath), "bidirectional_path expected to be sector.SectorPath"
-    assert bidirectional_path.is_bidirectional(), "bidirectional_path expected to be a bidiretional sector.SectorPath"
+    assert bidirectional_path.is_bidirectional(), "bidirectional_path expected to be a bidirectional sector.SectorPath"
 
     host_a_entity_obj = sector.query_entity(bidirectional_path.entity_a)
     host_b_entity_obj = sector.query_entity(bidirectional_path.entity_b)
@@ -474,7 +479,8 @@ def icmpv4_flow_activation(bidirectional_path, mpls_label):
     if (type(host_a_entity_obj), type(host_b_entity_obj)) == (Sector, Sector):
         raise TypeError("Sector to Sector tunnel ICMPv4 tunnel makes no sense.")
 
-    if (host_a_entity_obj.id, host_b_entity_obj.id) in mapped_icmpv4_services:
+    if (host_a_entity_obj.id, host_b_entity_obj.id) in mapped_icmpv4_services or \
+        (host_b_entity_obj.id, host_a_entity_obj.id) in mapped_icmpv4_services:
         raise Exception(
             "ICMPv4 service between {:s} and {:s} is already implemented.".format(
                 str(host_a_entity_obj.id), str(host_b_entity_obj.id)

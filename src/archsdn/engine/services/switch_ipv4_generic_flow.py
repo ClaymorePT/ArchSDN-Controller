@@ -24,15 +24,21 @@ class __GenericIPv4Service(Service):
             if switch_obj.is_active:
                 switch_ofp_parser = switch_obj.ofproto_parser
                 switch_ofp = switch_obj.ofproto
-                globals.send_msg(  # Removes the registered flow from this switch.
+                _log.debug("Removing flow with cookie ID 0x{:x} - {:s}.".format(flow.cookie, str(flow)))
+                switch_obj.send_msg(  # Removes the registered flow from this switch.
                     switch_ofp_parser.OFPFlowMod(
                         datapath=switch_obj,
                         cookie=flow.cookie,
+                        cookie_mask=0xFFFFFFFFFFFFFFFF,
                         table_id=flow.table_id,
                         command=switch_ofp.OFPFC_DELETE,
-                        flags=switch_ofp.OFPFF_SEND_FLOW_REM | switch_ofp.OFPFF_CHECK_OVERLAP
                     )
                 )
+                globals.send_msg(
+                    switch_ofp_parser.OFPBarrierRequest(switch_obj),
+                    reply_cls=switch_ofp_parser.OFPBarrierReply
+                )
+            del globals.active_flows[flow.cookie]
         globals.free_mpls_label_id(self.__mpls_label)
 
     @property
@@ -45,7 +51,8 @@ class __GenericIPv4Service(Service):
 
 def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
     assert isinstance(unidirectional_path, sector.SectorPath), "unidirectional_path expected to be sector.SectorPath"
-    assert not unidirectional_path.is_bidirectional(), "unidirectional_path expected to be an unidiretional sector.SectorPath"
+    assert not unidirectional_path.is_bidirectional(), \
+        "unidirectional_path expected to be an unidirectional sector.SectorPath"
 
     host_a_entity_id = unidirectional_path.entity_a
     host_b_entity_id = unidirectional_path.entity_b
@@ -76,7 +83,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
-            flags=single_switch_ofp.OFPFF_SEND_FLOW_REM | single_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_dst=str(host_b_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4)
@@ -120,7 +126,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
                 priority=globals.TABLE_2_MPLS_SWITCH_PRIORITY,
-                flags=middle_switch_ofp.OFPFF_SEND_FLOW_REM | middle_switch_ofp.OFPFF_CHECK_OVERLAP,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port,
                     eth_type=ether.ETH_TYPE_MPLS,
@@ -158,7 +163,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=ingressing_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
-            flags=ingressing_switch_ofp.OFPFF_SEND_FLOW_REM | ingressing_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=ingressing_switch_ofp_parser.OFPMatch(
                 eth_dst=str(host_b_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4)
@@ -182,7 +186,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             table_id=globals.MPLS_FILTERING_TABLE,
             command=ingressing_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
-            flags=ingressing_switch_ofp.OFPFF_SEND_FLOW_REM | ingressing_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=ingressing_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -222,7 +225,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             table_id=globals.MPLS_FILTERING_TABLE,
             command=egressing_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_2_MPLS_POP_PRIORITY,
-            flags=egressing_switch_ofp.OFPFF_SEND_FLOW_REM | egressing_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=egressing_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port,
                 eth_type=ether.ETH_TYPE_MPLS,
@@ -246,7 +248,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=egressing_switch_ofp.OFPFC_ADD,
             priority=globals.TABLE_5_LAYER_4_SPECIFIC_PRIORITY,
-            flags=egressing_switch_ofp.OFPFF_SEND_FLOW_REM | egressing_switch_ofp.OFPFF_CHECK_OVERLAP,
             match=egressing_switch_ofp_parser.OFPMatch(
                 eth_src=str(host_b_entity_obj.mac), eth_dst=str(host_a_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP

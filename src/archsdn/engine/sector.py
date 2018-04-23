@@ -231,7 +231,6 @@ class __BiDirectionPath(SectorPath):
 
     def uses_edge(self, edge):
         # (node_a_id) --edge_port-- > (node_b_id)
-        print(self.__sector_path)
         (node_a_id, node_b_id, edge_port) = edge
         path_len = len(self.__sector_path)
         for i in range(1, path_len-1):
@@ -388,8 +387,8 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 raise TypeError("switch_port_no type expected to be int. Got {:s}".format(type(kwargs['switch_port_no'])))
             if kwargs['switch_port_no'] not in entity_a.ports:
                 raise ValueError(
-                    "switch_port_no {:d} is is not valid for switch {:d}.".format(
-                        kwargs['switch_port_no'], entity_a_id
+                    "switch_port_no {:d} is is not valid for switch {:d}. Ports available {:s}".format(
+                        kwargs['switch_port_no'], entity_a_id, str(tuple(entity_a.ports.keys()))
                     )
                 )
 
@@ -452,17 +451,17 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 raise TypeError("switch_a_port_no type expected to be int. Got {:s}".format(type(kwargs['switch_a_port_no'])))
             if kwargs['switch_a_port_no'] not in entity_a.ports:
                 raise ValueError(
-                    "switch_a_port_no {:d} is is not valid for switch {:d}.".format(
-                        kwargs['switch_a_port_no'], entity_a_id
+                    "switch_a_port_no {:d} is is not valid for switch_a {:d}. Ports available {:s}".format(
+                        kwargs['switch_a_port_no'], entity_a_id, str(tuple(entity_a.ports.keys()))
                     )
                 )
 
             if not isinstance(kwargs['switch_b_port_no'], int):
                 raise TypeError("switch_b_port_no type expected to be int. Got {:s}".format(type(kwargs['switch_b_port_no'])))
-            if kwargs['switch_b_port_no'] not in entity_a.ports:
+            if kwargs['switch_b_port_no'] not in entity_b.ports:
                 raise ValueError(
-                    "switch_b_port_no {:d} is is not valid for switch {:d}.".format(
-                        kwargs['switch_b_port_no'], entity_b_id
+                    "switch_b_port_no {:d} is is not valid for switch_b {:d}. Ports available {:s}".format(
+                        kwargs['switch_b_port_no'], entity_b_id, str(tuple(entity_b.ports.keys()))
                     )
                 )
 
@@ -541,8 +540,8 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 raise TypeError("switch_port_no type expected to be int. Got {:s}".format(type(kwargs['switch_port_no'])))
             if kwargs['switch_port_no'] not in entity_a.ports:
                 raise ValueError(
-                    "switch_port_no {:d} is is not valid for switch {:d}.".format(
-                        kwargs['switch_port_no'], entity_a_id
+                    "switch_port_no {:d} is is not valid for switch {:d}. Ports available {:s}".format(
+                        kwargs['switch_port_no'], entity_a_id, str(tuple(entity_a.ports.keys()))
                     )
                 )
 
@@ -620,7 +619,7 @@ def query_connected_entity_id(switch_id, port_id):
 
         if port_id not in switch.ports:
             raise ValueError(
-                "switch {:d} is is not valid for switch {:016X}.".format(
+                "port {:d} is not registered for switch {:016X}.".format(
                     port_id, switch_id
                 )
             )
@@ -705,13 +704,13 @@ def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
 
         # 2nd Case - (Switch, Switch)
         elif isinstance(entity_a, Switch) and isinstance(entity_b, Switch):
-            entity_a_mac = __net[entity_a_id][entity_b_id][port_a]["source_mac"]
-            entity_b_mac = __net[entity_a_id][entity_b_id][port_a]["destiny_mac"]
+            entity_a_mac = __net[entity_a_id][entity_b_id][port_a]["data"]["source_mac"]
+            entity_b_mac = __net[entity_a_id][entity_b_id][port_a]["data"]["destiny_mac"]
 
             if port_a:
                 port_b = None
                 for port_b in __net[entity_b_id][entity_a_id]:
-                    link_data = __net[entity_b_id][entity_a_id][port_b]
+                    link_data = __net[entity_b_id][entity_a_id][port_b]["data"]
                     if link_data["source_mac"] == entity_b_mac and link_data["destiny_mac"] == entity_a_mac:
                         break
 

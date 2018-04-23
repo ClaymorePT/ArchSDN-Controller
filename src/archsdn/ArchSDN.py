@@ -201,34 +201,39 @@ class ArchSDN(RyuApp):
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
             sys.exit(str(ex))
 
-    @set_ev_cls(EventDP, MAIN_DISPATCHER)
+    @set_ev_cls(EventDP)
     def switch_connect_event(self, ev):
         global _log
 
         try:
+            _log.debug("switch_connect_event: {:s}".format(str(ev)))
             engine.process_datapath_event(ev)
 
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPPacketIn)
     def packet_in_event(self, ev):
         global _log
 
         try:
+            _log.debug("packet_in_event: {:s}".format(str(ev)))
             engine.process_packet_in_event(ev)
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
-    @set_ev_cls(ofp_event.EventOFPPortStateChange, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPPortStateChange)
     def port_status_event(self, ev):
         global _log
 
         try:
+            _log.debug("port_status_event: {:s}".format(str(ev)))
             engine.process_port_change_event(ev)
 
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+
+
 
 
 

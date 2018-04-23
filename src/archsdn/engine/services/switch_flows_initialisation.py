@@ -43,25 +43,25 @@ def init_switch_flows(switch_obj):
     globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
     # Stage 1 -> Disable all switching ports
-    for port_obj in switch_obj.ports.values():
-        switch_obj.send_msg(
-            ofp_parser.OFPPortMod(
-                datapath=switch_obj,
-                port_no=port_obj.port_no,
-                hw_addr=port_obj.hw_addr,
-                config=ofp.OFPPC_PORT_DOWN,
-                mask=ofp.OFPPC_PORT_DOWN,
-                advertise=0
-            )
-        )
-    globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
+    # for port_obj in switch_obj.ports.values():
+    #     switch_obj.send_msg(
+    #         ofp_parser.OFPPortMod(
+    #             datapath=switch_obj,
+    #             port_no=port_obj.port_no,
+    #             hw_addr=port_obj.hw_addr,
+    #             config=ofp.OFPPC_PORT_DOWN,
+    #             mask=ofp.OFPPC_PORT_DOWN,
+    #             advertise=0
+    #         )
+    #     )
+    # globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
     switch_obj.send_msg(  # Removes all flows registered in this switch.
         ofp_parser.OFPFlowMod(
             datapath=switch_obj,
-            cookie=0,
-            cookie_mask=0xFFFFFFFFFFFFFFFF,
             table_id=ofp.OFPTT_ALL,
+            out_port=ofp.OFPP_ANY,
+            out_group=ofp.OFPG_ANY,
             command=ofp.OFPFC_DELETE,
         )
     )
@@ -86,21 +86,20 @@ def init_switch_flows(switch_obj):
 
     # Stage 2 -> Configure Tables with default flows.
 
-    # # Inserting Table-Miss flows for all tables
-    # for table_no in __ARCHSDN_TABLES:
-    #     switch_obj.send_msg(
-    #         ofp_parser.OFPFlowMod(
-    #             datapath=switch_obj,
-    #             table_id=table_no,
-    #             command=ofp.OFPFC_ADD,
-    #             priority=__TABLE_MISS_PRIORITY,
-    #             flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
-    #             match=ofp_parser.OFPMatch(),
-    #             instructions=[
-    #                 ofp_parser.OFPInstructionActions(ofp.OFPIT_CLEAR_ACTIONS)
-    #             ]
-    #         )
-    #     )
+    # Inserting Table-Miss flows for all tables
+    for table_no in globals.ARCHSDN_TABLES:
+        switch_obj.send_msg(
+            ofp_parser.OFPFlowMod(
+                datapath=switch_obj,
+                table_id=table_no,
+                command=ofp.OFPFC_ADD,
+                priority=globals.TABLE_MISS_PRIORITY,
+                match=ofp_parser.OFPMatch(),
+                instructions=[
+                    ofp_parser.OFPInstructionActions(ofp.OFPIT_CLEAR_ACTIONS, [])
+                ]
+            )
+        )
 
     #  Default Flows for __PORT_SEGREGATION_TABLE are:
     #  - DHCP Boot
@@ -109,11 +108,10 @@ def init_switch_flows(switch_obj):
 
     boot_dhcp = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.PORT_SEGREGATION_TABLE,
         command=ofp.OFPFC_ADD,
         priority=globals.TABLE_0_DISCOVERY_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
             ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
@@ -131,11 +129,10 @@ def init_switch_flows(switch_obj):
 
     archsdn_beacon = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.PORT_SEGREGATION_TABLE,
         command=ofp.OFPFC_ADD,
         priority=globals.TABLE_0_DISCOVERY_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(eth_type=0xAAAA),
         instructions=[
             ofp_parser.OFPInstructionActions(
@@ -158,11 +155,10 @@ def init_switch_flows(switch_obj):
     #   controller, from pkt_in_port.
     host_boot_dhcp = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
         priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
             ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
@@ -180,14 +176,15 @@ def init_switch_flows(switch_obj):
 
     arp_flow = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
+        priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
         match=ofp_parser.OFPMatch(
             eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_ARP,
-            arp_op=1, arp_tpa=(str(ipv4_service), 0xFFFFFFFF), arp_tha='00:00:00:00:00:00'
+            arp_op=1, arp_tha='00:00:00:00:00:00',
+            arp_spa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+            arp_tpa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
         ),
         instructions=[
             ofp_parser.OFPInstructionActions(
@@ -203,11 +200,10 @@ def init_switch_flows(switch_obj):
     #   controller, from pkt_in_port.
     service_icmp_flow = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
         priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_type=ether.ETH_TYPE_IP, eth_dst=str(mac_service),
             ipv4_dst=str(ipv4_service),
@@ -227,11 +223,10 @@ def init_switch_flows(switch_obj):
     #   controller, from pkt_in_port.
     service_dns_flow = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
         priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_dst=str(mac_service), eth_type=ether.ETH_TYPE_IP,
             ipv4_dst=str(ipv4_service),
@@ -250,11 +245,10 @@ def init_switch_flows(switch_obj):
     # Activate a flow to redirect to the controller, ipv4 packets sent by a network host to another network host.
     default_ipv4_flow = ofp_parser.OFPFlowMod(
         datapath=switch_obj,
-        cookie=globals.alloc_cookie_id(),
+        cookie=0,
         table_id=globals.HOST_FILTERING_TABLE,
         command=ofp.OFPFC_ADD,
         priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
-        flags=ofp.OFPFF_SEND_FLOW_REM | ofp.OFPFF_CHECK_OVERLAP,
         match=ofp_parser.OFPMatch(
             eth_type=ether.ETH_TYPE_IP,
             ipv4_src=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
@@ -279,24 +273,16 @@ def init_switch_flows(switch_obj):
     switch_obj.send_msg(default_ipv4_flow)
     globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
-    globals.active_flows[boot_dhcp.cookie] = (boot_dhcp, switch_obj.id)
-    globals.active_flows[host_boot_dhcp.cookie] = (host_boot_dhcp, switch_obj.id)
-    globals.active_flows[archsdn_beacon.cookie] = (archsdn_beacon, switch_obj.id)
-    globals.active_flows[arp_flow.cookie] = (arp_flow, switch_obj.id)
-    globals.active_flows[service_icmp_flow.cookie] = (service_icmp_flow, switch_obj.id)
-    globals.active_flows[service_dns_flow.cookie] = (service_dns_flow, switch_obj.id)
-    globals.active_flows[default_ipv4_flow.cookie] = (default_ipv4_flow, switch_obj.id)
-
     # Stage 3 -> Enable all switching ports TODO: and send DHCP FORCERENEW ?? rfc3203
-    for port_obj in switch_obj.ports.values():
-        switch_obj.send_msg(
-            ofp_parser.OFPPortMod(
-                datapath=switch_obj,
-                port_no=port_obj.port_no,
-                hw_addr=port_obj.hw_addr,
-                config=0,
-                mask=ofp.OFPPC_PORT_DOWN,
-                advertise=0
-            )
-        )
-    globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
+    # for port_obj in switch_obj.ports.values():
+    #     switch_obj.send_msg(
+    #         ofp_parser.OFPPortMod(
+    #             datapath=switch_obj,
+    #             port_no=port_obj.port_no,
+    #             hw_addr=port_obj.hw_addr,
+    #             config=0,
+    #             mask=ofp.OFPPC_PORT_DOWN,
+    #             advertise=0
+    #         )
+    #     )
+    # globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)

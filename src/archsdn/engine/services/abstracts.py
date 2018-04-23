@@ -8,4 +8,8 @@ class Service(ABC):
     def id(self):
         return id(self)
 
+    @abstractmethod
+    def has_entity(self, entity_id):
+        pass
+
 
