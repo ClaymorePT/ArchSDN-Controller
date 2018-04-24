@@ -105,43 +105,48 @@ def init_switch_flows(switch_obj):
     #  - DHCP Boot
     #  - ArchSDN Discovery Beacon
     #  - Table-Miss
+    default_flows = []
 
-    boot_dhcp = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.PORT_SEGREGATION_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_0_DISCOVERY_PRIORITY,
-        match=ofp_parser.OFPMatch(
-            eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
-            ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
-            udp_src=68, udp_dst=67
-        ),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                ]
-            )
-        ]
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.PORT_SEGREGATION_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_0_DISCOVERY_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
+                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
+                udp_src=68, udp_dst=67
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
+                    ]
+                )
+            ]
+        )
     )
 
-    archsdn_beacon = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.PORT_SEGREGATION_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_0_DISCOVERY_PRIORITY,
-        match=ofp_parser.OFPMatch(eth_type=0xAAAA),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                ]
-            )
-        ]
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.PORT_SEGREGATION_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_0_DISCOVERY_PRIORITY,
+            match=ofp_parser.OFPMatch(eth_type=0xAAAA),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
+                    ]
+                )
+            ]
+        )
     )
 
     #  Default Flows for __HOST_FILTERING_TABLE are:
@@ -151,126 +156,152 @@ def init_switch_flows(switch_obj):
     #  - DNS packets destined to the service IP network, are redirected to controller.
     #  - IPv4 packets sent by a network host to another network host, are redirected to controller.
 
-    # Activate a flow to redirect to the controller ARP Request packets sent from the host to the
-    #   controller, from pkt_in_port.
-    host_boot_dhcp = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.HOST_FILTERING_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-        match=ofp_parser.OFPMatch(
-            eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
-            ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
-            udp_src=68, udp_dst=67
-        ),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
-                ]
-            )
-        ]
+    # Flow for DHCP Requests
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
+                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
+                udp_src=68, udp_dst=67
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER)
+                    ]
+                )
+            ]
+        )
     )
 
-    arp_flow = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.HOST_FILTERING_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
-        match=ofp_parser.OFPMatch(
-            eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_ARP,
-            arp_op=1, arp_tha='00:00:00:00:00:00',
-            arp_spa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
-            arp_tpa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
-        ),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
-                ]
-            )
-        ]
+    # Flow for ARP Requests
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_ARP,
+                arp_op=1, arp_tha='00:00:00:00:00:00',
+                arp_spa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+                arp_tpa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
+                    ]
+                )
+            ]
+        )
     )
 
-    # Activate a flow to redirect to the controller ICMP Request packets sent from the host to the
+    # Activate a flow to redirect to the controller ICMP packets sent from the host to the
     #   controller, from pkt_in_port.
-    service_icmp_flow = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.HOST_FILTERING_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-        match=ofp_parser.OFPMatch(
-            eth_type=ether.ETH_TYPE_IP, eth_dst=str(mac_service),
-            ipv4_dst=str(ipv4_service),
-            ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
-        ),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
-                ]
-            )
-        ]
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_type=ether.ETH_TYPE_IP, eth_dst=str(mac_service),
+                ipv4_dst=str(ipv4_service),
+                ip_proto=inet.IPPROTO_ICMP,
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
+                    ]
+                )
+            ]
+        )
     )
 
     # Activate a flow to redirect to the controller DNS packets sent from the host to the
     #   controller, from pkt_in_port.
-    service_dns_flow = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.HOST_FILTERING_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
-        match=ofp_parser.OFPMatch(
-            eth_dst=str(mac_service), eth_type=ether.ETH_TYPE_IP,
-            ipv4_dst=str(ipv4_service),
-            ip_proto=inet.IPPROTO_UDP, udp_dst=53
-        ),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
-                ]
-            )
-        ]
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_dst=str(mac_service), eth_type=ether.ETH_TYPE_IP,
+                ipv4_dst=str(ipv4_service),
+                ip_proto=inet.IPPROTO_UDP, udp_dst=53
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
+                    ]
+                )
+            ]
+        )
     )
 
     # Activate a flow to redirect to the controller, ipv4 packets sent by a network host to another network host.
-    default_ipv4_flow = ofp_parser.OFPFlowMod(
-        datapath=switch_obj,
-        cookie=0,
-        table_id=globals.HOST_FILTERING_TABLE,
-        command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
-        match=ofp_parser.OFPMatch(
-            eth_type=ether.ETH_TYPE_IP,
-            ipv4_src=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
-            ipv4_dst=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
-        ),
-        instructions=[
-            ofp_parser.OFPInstructionActions(
-                ofp.OFPIT_APPLY_ACTIONS,
-                [
-                    ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
-                ]
-            )
-        ]
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_type=ether.ETH_TYPE_IP,
+                ipv4_src=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+                ipv4_dst=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
+                    ]
+                )
+            ]
+        )
     )
 
-    switch_obj.send_msg(boot_dhcp)
-    switch_obj.send_msg(host_boot_dhcp)
-    switch_obj.send_msg(archsdn_beacon)
-    switch_obj.send_msg(arp_flow)
-    switch_obj.send_msg(service_icmp_flow)
-    switch_obj.send_msg(service_dns_flow)
-    switch_obj.send_msg(default_ipv4_flow)
+    # Service Denial for irregular packets
+    # Activate a flow to drop ICMP Request packets, which the ipv4_source address is the service address
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_type=ether.ETH_TYPE_IP,
+                ipv4_src=str(ipv4_service),
+                ip_proto=inet.IPPROTO_ICMP,
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(ofp.OFPIT_CLEAR_ACTIONS, [])
+            ]
+        )
+    )
+
+
+    for flow in default_flows:
+        switch_obj.send_msg(flow)
     globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
     # Stage 3 -> Enable all switching ports TODO: and send DHCP FORCERENEW ?? rfc3203

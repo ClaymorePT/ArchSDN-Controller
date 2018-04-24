@@ -1,25 +1,13 @@
 
 import logging
-from ipaddress import IPv4Address
-import struct
-from uuid import UUID
 
-from scapy.packet import Padding, Raw
-from scapy.layers.l2 import Ether, ARP
-from scapy.layers.inet import IP, UDP, TCP, ICMP
-from scapy.layers.dhcp import BOOTP, DHCP
-from scapy.layers.dns import DNSRR, DNS, DNSQR
-
-from ryu.ofproto import ether
 from netaddr import EUI
 
 from archsdn.helpers import logger_module_name
 from archsdn.engine import globals
-from archsdn import database
-from archsdn import central
 from archsdn.engine import sector
 from archsdn.engine import entities
-from archsdn.engine import services
+
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -114,50 +102,50 @@ def process_event(port_change_event):
 
         elif reason_num == 1:
             if port_no in switch.ports:
-                connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
-                sector.disconnect_entities(datapath_id, connected_entity_id, port_no)
-                switch.remove_port(port_no)
+                if sector.is_port_connected(datapath_id, port_no):
+                    # Kill services in the sector which use this port
+                    connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
+                    services_to_kill = []
+                    for service_type in globals.mapped_services["IPv4"]:
+                        for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
+                            if globals.mapped_services["IPv4"][service_type][service_tuple_id].uses_edge(
+                                    datapath_id, connected_entity_id, port_no
+                            ):
+                                services_to_kill.append(("IPv4", service_type, service_tuple_id))
 
+                    for service_tuple_id in globals.mapped_services["MPLS"]:
+                        if globals.mapped_services["MPLS"][service_tuple_id].uses_edge(
+                                datapath_id, connected_entity_id, port_no
+                        ):
+                            services_to_kill.append(("MPLS", None, service_tuple_id))
+
+                    for (service_layer, service_type, service_tuple_id) in services_to_kill:
+                        if service_layer == "IPv4":
+                            del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                        elif service_layer == "MPLS":
+                            del globals.mapped_services[service_layer][service_tuple_id]
+
+                    # Removes all flows registered in this switch, registered at table PORT_SEGREGATION_TABLE
+                    #   and matching port_no.
+                    datapath_obj.send_msg(
+                        ofp_parser.OFPFlowMod(
+                            datapath=datapath_obj,
+                            table_id=globals.PORT_SEGREGATION_TABLE,
+                            command=ofp.OFPFC_DELETE,
+                            match=ofp_parser.OFPMatch(in_port=port_no)
+                        )
+                    )
+                    globals.send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
+
+                    sector.disconnect_entities(datapath_id, connected_entity_id, port_no)
+
+                switch.remove_port(port_no)
             else:
                 _log.warning(
                     "Port {:d} not previously registered at Switch {:016X}.".format(
                         port_no, datapath_id
                     )
                 )
-
-            # Kill services in the sector which use this port
-            connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
-            services_to_kill = []
-            for service_type in globals.mapped_services["IPv4"]:
-                for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
-                    if globals.mapped_services["IPv4"][service_type][service_tuple_id].uses_edge(
-                            datapath_id, connected_entity_id, port_no
-                    ):
-                        services_to_kill.append(("IPv4", service_type, service_tuple_id))
-
-            for service_tuple_id in globals.mapped_services["MPLS"]:
-                if globals.mapped_services["MPLS"][service_tuple_id].uses_edge(
-                        datapath_id, connected_entity_id, port_no
-                ):
-                    services_to_kill.append(("MPLS", None, service_tuple_id))
-
-            for (service_layer, service_type, service_tuple_id) in services_to_kill:
-                if service_layer == "IPv4":
-                    del globals.mapped_services[service_layer][service_type][service_tuple_id]
-                elif service_layer == "MPLS":
-                    del globals.mapped_services[service_layer][service_tuple_id]
-
-            # Removes all flows registered in this switch, registered at table PORT_SEGREGATION_TABLE
-            #   and matching port_no.
-            datapath_obj.send_msg(
-                ofp_parser.OFPFlowMod(
-                    datapath=datapath_obj,
-                    table_id=globals.PORT_SEGREGATION_TABLE,
-                    command=ofp.OFPFC_DELETE,
-                    match=ofp_parser.OFPMatch(in_port=port_no)
-                )
-            )
-            globals.send_msg(ofp_parser.OFPBarrierRequest(datapath_obj), reply_cls=ofp_parser.OFPBarrierReply)
 
         else:
             # For some reason, OpenVSwitch sends events about ports that have already been removed.

@@ -481,6 +481,7 @@ def process_event(packet_in_event):
             elif pkt_ipv4_dst in ipv4_network:  # If the destination IP belongs to the network.
                 # Opens a bi-directional tunnel to target, using the same path in both directions.
                 host_not_found_in_sector = False
+                host_not_found_in_network = False
                 try:
                     addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
                     target_switch_id = addr_info_dst["datapath"]
@@ -531,14 +532,58 @@ def process_event(packet_in_event):
                         #  process which will implement the cross-sector ICMP service between the hosts.
 
                         addr_info = central.query_address_info(ipv4=pkt_ipv4_dst)
-                        raise AssertionError(
+                        raise Exception(
                             "Support for hosts in other sectors, is Not implemented {}.".format(str(addr_info))
                         )
 
                     except central.NoResultsAvailable:
                         _log.error("Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
+                        host_not_found_in_network = True
+
+                if host_not_found_in_network:
+                    # If the destination IP is not registered at the central manager, return ICMP Host Unreachable.
+                    icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
+                                 / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                                 / ICMP(
+                        type="dest-unreach",
+                        code="host-unreachable",
+                        id=icmp_layer.id,
+                        seq=icmp_layer.seq,
+                    ) \
+                                 / Raw(data_layer.load)
+
+                    datapath_obj.send_msg(
+                        datapath_ofp_parser.OFPPacketOut(
+                            datapath=msg.datapath,
+                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
+                            in_port=datapath_ofp.OFPP_CONTROLLER,
+                            actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
+                            data=bytes(icmp_reply)
+                        )
+                    )
 
             else:
+                # If the destination IP is in a different network, return ICMP Network Unreachable
+                icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
+                             / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                             / ICMP(
+                    type="dest-unreach",
+                    code="network-unreachable",
+                    id=icmp_layer.id,
+                    seq=icmp_layer.seq,
+                ) \
+                             / Raw(data_layer.load)
+
+                datapath_obj.send_msg(
+                    datapath_ofp_parser.OFPPacketOut(
+                        datapath=msg.datapath,
+                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
+                        in_port=datapath_ofp.OFPP_CONTROLLER,
+                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
+                        data=bytes(icmp_reply)
+                    )
+                )
+
                 _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
 
         elif ip_layer.haslayer(DNS):

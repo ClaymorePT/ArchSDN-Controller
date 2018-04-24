@@ -24,14 +24,17 @@ class __GenericIPv4Service(Service):
             if switch_obj.is_active:
                 switch_ofp_parser = switch_obj.ofproto_parser
                 switch_ofp = switch_obj.ofproto
-                _log.debug("Removing flow with cookie ID 0x{:x} - {:s}.".format(flow.cookie, str(flow)))
+                _log.debug("Removing flow with cookie ID 0x{:x}.".format(flow.cookie))
+
                 switch_obj.send_msg(  # Removes the registered flow from this switch.
                     switch_ofp_parser.OFPFlowMod(
                         datapath=switch_obj,
                         cookie=flow.cookie,
                         cookie_mask=0xFFFFFFFFFFFFFFFF,
-                        table_id=flow.table_id,
+                        table_id=switch_ofp.OFPTT_ALL,
                         command=switch_ofp.OFPFC_DELETE,
+                        out_port=switch_ofp.OFPP_ANY,
+                        out_group=switch_ofp.OFPG_ANY,
                     )
                 )
                 globals.send_msg(
