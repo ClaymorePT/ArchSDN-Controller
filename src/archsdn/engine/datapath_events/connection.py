@@ -68,7 +68,7 @@ def process_event(dp_event):
                         if hash_val not in globals.beacons_hash_table:
                             globals.beacons_hash_table[hash_val] = (datapath_id, port_no)
                         beacon = Ether(
-                            src=str(mac_service),
+                            src=str(ports[port_no]["hw_addr"]),
                             dst="FF:FF:FF:FF:FF:FF",
                             type=0xAAAA
                         ) / Raw(
