@@ -1,4 +1,5 @@
 import logging
+from abc import abstractmethod
 
 from ryu.ofproto import ether, inet
 
@@ -19,7 +20,8 @@ class __ICMPv4Service(Service):
         self.__mpls_label = mpls_label
 
     def __del__(self):
-        for flow in self.__scenario_flows:
+        flows = self.__scenario_flows[0] + self.__scenario_flows[1] + self.__scenario_flows[2]
+        for flow in flows:
             switch_obj = globals.get_datapath_obj(flow.datapath.id)
             if switch_obj.is_active:
                 switch_ofp_parser = switch_obj.ofproto_parser
@@ -41,7 +43,6 @@ class __ICMPv4Service(Service):
                     switch_ofp_parser.OFPBarrierRequest(switch_obj),
                     reply_cls=switch_ofp_parser.OFPBarrierReply
                 )
-            del globals.active_flows[flow.cookie]
         globals.free_mpls_label_id(self.__mpls_label)
 
     @property
@@ -53,6 +54,10 @@ class __ICMPv4Service(Service):
 
     def has_entity(self, entity_id):
         return self.__bidirectional_path.has_entity(entity_id)
+
+    @property
+    def service_q_value(self):
+        return self.__bidirectional_path.service_q_value
 
 
 def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
@@ -67,8 +72,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
 
     assert isinstance(host_a_entity_obj, Host), "a_entity_obj type is not Host"
     assert isinstance(host_b_entity_obj, Host), "b_entity_obj type is not Host"
-
-    tunnel_flows = []
 
     if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
@@ -125,10 +128,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             single_switch_ofp_parser.OFPBarrierRequest(single_switch_obj),
             reply_cls=single_switch_ofp_parser.OFPBarrierReply
         )
-        tunnel_flows.append(side_a_flow)
-        tunnel_flows.append(side_b_flow)
-        globals.active_flows[side_a_flow.cookie] = (side_a_flow, unique_switch_id)
-        globals.active_flows[side_b_flow.cookie] = (side_b_flow, unique_switch_id)
+        tunnel_flows = ((side_a_flow,), (side_b_flow,), tuple())
 
     else:
         # Multiswitch path requires an MPLS label to build a tunnel.
@@ -140,6 +140,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
         #  Edges switches are those who perform the ingress and egress packet procedures.
         #
         #  Tunnel implementation at path core switches
+        mpls_tunnel_flows = []
         for (middle_switch_id, switch_in_port, switch_out_port) in switches_info[1:-1]:
             middle_switch_obj = globals.get_datapath_obj(middle_switch_id)
             middle_switch_ofp_parser = middle_switch_obj.ofproto_parser
@@ -164,8 +165,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 ]
             )
             middle_switch_obj.send_msg(mpls_flow_mod)
-            tunnel_flows.append(mpls_flow_mod)
-            globals.active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, middle_switch_id)
+            mpls_tunnel_flows.append(mpls_flow_mod)
 
             mpls_flow_mod = middle_switch_ofp_parser.OFPFlowMod(
                 datapath=middle_switch_obj,
@@ -186,8 +186,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 ]
             )
             middle_switch_obj.send_msg(mpls_flow_mod)
-            tunnel_flows.append(mpls_flow_mod)
-            globals.active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, middle_switch_id)
+            mpls_tunnel_flows.append(mpls_flow_mod)
             globals.send_msg(
                 middle_switch_ofp_parser.OFPBarrierRequest(middle_switch_obj),
                 reply_cls=middle_switch_ofp_parser.OFPBarrierReply
@@ -294,16 +293,6 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             side_a_switch_ofp_parser.OFPBarrierRequest(side_a_switch_obj),
             reply_cls=side_a_switch_ofp_parser.OFPBarrierReply
         )
-
-        tunnel_flows.append(side_a_host_to_mpls_flow)
-        tunnel_flows.append(side_a_mpls_flow_mod)
-        tunnel_flows.append(egress_side_a_tunnel_flow)
-        tunnel_flows.append(foreign_host_side_a_flow)
-
-        globals.active_flows[side_a_host_to_mpls_flow.cookie] = (side_a_host_to_mpls_flow, unique_switch_id)
-        globals.active_flows[side_a_mpls_flow_mod.cookie] = (side_a_mpls_flow_mod, unique_switch_id)
-        globals.active_flows[egress_side_a_tunnel_flow.cookie] = (egress_side_a_tunnel_flow, unique_switch_id)
-        globals.active_flows[foreign_host_side_a_flow.cookie] = (foreign_host_side_a_flow, unique_switch_id)
         ###############################
 
         #
@@ -407,18 +396,24 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             reply_cls=side_b_switch_ofp_parser.OFPBarrierReply
         )
 
-        tunnel_flows.append(ingress_side_b_tunnel_flow)
-        tunnel_flows.append(side_b_mpls_flow_mod)
-        tunnel_flows.append(egress_side_b_tunnel_flow)
-        tunnel_flows.append(foreign_host_side_b_flow)
-
-        globals.active_flows[ingress_side_b_tunnel_flow.cookie] = (ingress_side_b_tunnel_flow, side_b_switch_id)
-        globals.active_flows[side_b_mpls_flow_mod.cookie] = (side_b_mpls_flow_mod, side_b_switch_id)
-        globals.active_flows[egress_side_b_tunnel_flow.cookie] = (egress_side_b_tunnel_flow, side_b_switch_id)
-        globals.active_flows[foreign_host_side_b_flow.cookie] = (foreign_host_side_b_flow, unique_switch_id)
+        tunnel_flows = (
+            (
+                side_a_host_to_mpls_flow,
+                side_a_mpls_flow_mod,
+                egress_side_a_tunnel_flow,
+                foreign_host_side_a_flow
+            ),
+            (
+                ingress_side_b_tunnel_flow,
+                side_b_mpls_flow_mod,
+                egress_side_b_tunnel_flow,
+                foreign_host_side_b_flow,
+            ),
+            tuple(mpls_tunnel_flows)
+        )
         ###############################
 
-        return __ICMPv4Service(bidirectional_path, tunnel_flows, mpls_label)
+    return __ICMPv4Service(bidirectional_path, tunnel_flows, mpls_label)
 
 
 def __icmpv4_flow_activation_host_to_sector(bidirectional_path, mpls_label):

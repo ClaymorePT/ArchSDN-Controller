@@ -66,6 +66,11 @@ class SectorPath(ABC):
     def switches_info(self):
         pass
 
+    @property
+    @abstractmethod
+    def service_q_value(self):
+        pass
+
     @abstractmethod
     def has_entity(self, entity_id):
         pass
@@ -109,6 +114,10 @@ class __OneDirectionPath(SectorPath):
             return (copy(self.__sector_path[1]),)
         else:
             return tuple((copy(elem) for elem in self.__sector_path[1:-1]))
+
+    @property
+    def service_q_value(self):
+        return 1
 
     def has_entity(self, entity_id):
         if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
@@ -221,6 +230,10 @@ class __BiDirectionPath(SectorPath):
             return (copy(self.__sector_path[1]),)
         else:
             return tuple((copy(elem) for elem in self.__sector_path[1:-1]))
+
+    @property
+    def service_q_value(self):
+        return 1
 
     def has_entity(self, entity_id):
         if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
