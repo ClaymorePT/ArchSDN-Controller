@@ -19,7 +19,8 @@ class __GenericIPv4Service(Service):
         self.__mpls_label = mpls_label
 
     def __del__(self):
-        for flow in self.__scenario_flows:
+        flows = self.__scenario_flows[0] + self.__scenario_flows[1] + self.__scenario_flows[2]
+        for flow in flows:
             switch_obj = flow.datapath
             if switch_obj.is_active:
                 switch_ofp_parser = switch_obj.ofproto_parser
@@ -41,7 +42,6 @@ class __GenericIPv4Service(Service):
                     switch_ofp_parser.OFPBarrierRequest(switch_obj),
                     reply_cls=switch_ofp_parser.OFPBarrierReply
                 )
-            del globals.active_flows[flow.cookie]
         globals.free_mpls_label_id(self.__mpls_label)
 
     @property
@@ -65,8 +65,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
 
     assert isinstance(host_a_entity_obj, Host), "a_entity_obj type is not Host"
     assert isinstance(host_b_entity_obj, Host), "b_entity_obj type is not Host"
-
-    tunnel_flows = []
 
     if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
@@ -100,13 +98,12 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             ]
         )
         single_switch_obj.send_msg(flow_tcp)
-        tunnel_flows.append(flow_tcp)
-        globals.active_flows[flow_tcp.cookie] = (flow_tcp, single_switch_id)
-
         globals.send_msg(
             single_switch_ofp_parser.OFPBarrierRequest(single_switch_obj),
             reply_cls=single_switch_ofp_parser.OFPBarrierReply
         )
+
+        tunnel_flows = ((flow_tcp,), tuple(), tuple())
 
     else:
         # Multiswitch path requires an MPLS label to build a tunnel.
@@ -118,6 +115,7 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
         #  Edges switches are those who perform the ingress and egress packet procedures.
         #
         #  Tunnel implementation at path core switches
+        mpls_tunnel_flows = []
         for (middle_switch_id, switch_in_port, switch_out_port) in switches_info[1:-1]:
             middle_switch_obj = globals.get_datapath_obj(middle_switch_id)
             middle_switch_ofp_parser = middle_switch_obj.ofproto_parser
@@ -144,12 +142,11 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
                 ]
             )
             middle_switch_obj.send_msg(mpls_flow_mod)
-            tunnel_flows.append(mpls_flow_mod)
-            globals.active_flows[mpls_flow_mod.cookie] = (mpls_flow_mod, middle_switch_id)
             globals.send_msg(
                 middle_switch_ofp_parser.OFPBarrierRequest(middle_switch_obj),
                 reply_cls=middle_switch_ofp_parser.OFPBarrierReply
             )
+            mpls_tunnel_flows.append(mpls_flow_mod)
         ###############################
 
         #
@@ -209,11 +206,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             reply_cls=ingressing_switch_ofp_parser.OFPBarrierReply
         )
 
-        tunnel_flows.append(ingress_side_a_tunnel_flow)
-        tunnel_flows.append(side_a_mpls_flow_mod)
-        globals.active_flows[ingress_side_a_tunnel_flow.cookie] = (ingress_side_a_tunnel_flow, ingressing_switch_id)
-        globals.active_flows[side_a_mpls_flow_mod.cookie] = (side_a_mpls_flow_mod, ingressing_switch_id)
-
         ###############################
 
         # Tunnel configuration from egressing side
@@ -222,6 +214,7 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
         egressing_switch_ofp_parser = egress_switch_obj.ofproto_parser
         egressing_switch_ofp = egress_switch_obj.ofproto
 
+        # MPLS egression flow
         egress_side_b_tunnel_flow = egressing_switch_ofp_parser.OFPFlowMod(
             datapath=egress_switch_obj,
             cookie=globals.alloc_cookie_id(),
@@ -244,7 +237,7 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             ]
         )
 
-        # Host B to Host A specific ICMP4 flow - Side A
+        # Flow for IPv4 data sent from Host A to Host B
         foreign_host_flow = egressing_switch_ofp_parser.OFPFlowMod(
             datapath=egress_switch_obj,
             cookie=globals.alloc_cookie_id(),
@@ -267,17 +260,24 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
 
         egress_switch_obj.send_msg(egress_side_b_tunnel_flow)
         egress_switch_obj.send_msg(foreign_host_flow)
-        tunnel_flows.append(egress_side_b_tunnel_flow)
-        tunnel_flows.append(foreign_host_flow)
-        globals.active_flows[egress_side_b_tunnel_flow.cookie] = (egress_side_b_tunnel_flow, egress_switch_id)
-        globals.active_flows[foreign_host_flow.cookie] = (foreign_host_flow, egress_switch_id)
-
         globals.send_msg(
             egressing_switch_ofp_parser.OFPBarrierRequest(egress_switch_obj),
             reply_cls=egressing_switch_ofp_parser.OFPBarrierReply
         )
 
-        return __GenericIPv4Service(unidirectional_path, tunnel_flows, mpls_label)
+        tunnel_flows = (
+            (
+                ingress_side_a_tunnel_flow,
+                side_a_mpls_flow_mod,
+            ),
+            (
+                egress_side_b_tunnel_flow,
+                foreign_host_flow,
+            ),
+            tuple()
+        )
+
+    return __GenericIPv4Service(unidirectional_path, tunnel_flows, mpls_label)
 
 
 def __ipv4_flow_activation_host_to_sector(unidirectional_path, mpls_label):
