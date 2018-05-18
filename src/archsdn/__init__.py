@@ -36,7 +36,6 @@ def start_controller():
         __log = logging.getLogger(logger_module_name(__file__))
 
         __log.info('{:s}'.format(str(parsed_args)))
-        ofp_port_default = 6631
 
         if parsed_args.cip is None:
             raise Exception("Central Manager IP was not provided.")
@@ -56,7 +55,7 @@ def start_controller():
 
         args = args + [
             '--ofp-listen-host', '{:s}'.format(str(parsed_args.ofip)),
-            '--ofp-tcp-listen-port', '{:d}'.format(ofp_port_default),
+            '--ofp-tcp-listen-port', '{:d}'.format(parsed_args.ofport),
             '--user-flags', '/'.join((str(pathlib.Path(__file__).parent), "ArchSDN_opts.py")),
         ]
 

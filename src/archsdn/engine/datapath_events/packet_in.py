@@ -1,8 +1,11 @@
 
+import sys
 import logging
 from ipaddress import IPv4Address
 import struct
 from uuid import UUID
+import time
+import random
 
 from scapy.packet import Padding, Raw
 from scapy.layers.l2 import Ether, ARP
@@ -10,16 +13,19 @@ from scapy.layers.inet import IP, UDP, TCP, ICMP
 from scapy.layers.dhcp import BOOTP, DHCP
 from scapy.layers.dns import DNSRR, DNS, DNSQR
 
+from ryu.lib import hub
 from ryu.ofproto import ether
 from netaddr import EUI
 
-from archsdn.helpers import logger_module_name
+from archsdn.helpers import logger_module_name, custom_logging_callback
 from archsdn.engine import globals
 from archsdn import database
 from archsdn import central
 from archsdn.engine import sector
 from archsdn.engine import entities
 from archsdn.engine import services
+from archsdn import p2p_requests
+from archsdn.engine.exceptions import PathNotFound
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -102,7 +108,8 @@ def process_event(packet_in_event):
                 if not sector.is_port_connected(datapath_id, pkt_in_port):
                     sector.connect_entities(
                         datapath_id, sender_controller_uuid,
-                        switch_port_no=pkt_in_port
+                        switch_port_no=pkt_in_port,
+                        hash_val=hash_val
                     )
 
                     # Activate segregation flow at the switch port for the detected sector
@@ -160,53 +167,59 @@ def process_event(packet_in_event):
 
             if arp_layer.pdst == str(ipv4_service):  # If the MAC Address is the Service MAC
                 _log.debug("Arp target {:s} is the controller of this sector. ".format(arp_layer.pdst))
-                mac_target_str = mac_service
+                mac_target = mac_service
             else:
                 try:
                     try:
                         #  If the target is registered in this sector...
                         target_client_info = database.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+                        mac_target = target_client_info["mac"]
 
                         _log.debug(
                             "Target {:s} belongs to this sector. "
-                            "It is registered with client id {:d}, MAC {:s} at switch {:016X}, connected at port {:d}.".format(
+                            "It is registered with client id {:d}, MAC {:s} at switch {:016X}, "
+                            "connected at port {:d}.".format(
                                 arp_layer.pdst,
                                 target_client_info["client_id"],
-                                str(target_client_info["mac"]),
+                                str(mac_target),
                                 target_client_info["datapath"],
                                 target_client_info["port"],
                             )
                         )
-                        mac_target_str = target_client_info["mac"]
+
                     except database.AddressNotRegistered:
                         # The target is not registered in the sector.
                         # Ask the central manager for the controller id and client id.
                         # Then ask the respective controller for information about its client.
                         address_info = central.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+                        controller_proxy = p2p_requests.get_controller_proxy(address_info.controller_id)
+                        target_client_info = controller_proxy.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
+                        mac_target = target_client_info["mac"]
+
                         _log.debug(
-                            "Target {:s} with client id {:d} belongs to controller {:s} sector.".format(
+                            "Target {:s} with client id {:d} belongs to controller {:s} sector and has MAC {:s}".format(
                                 arp_layer.pdst,
                                 address_info.client_id,
-                                str(address_info.controller_id)
+                                str(address_info.controller_id),
+                                str(mac_target)
                             )
                         )
-                        mac_target_str = None
 
                 except central.NoResultsAvailable:
                     _log.debug("Target {:s} is not registered at the central manager.".format(arp_layer.pdst))
-                    mac_target_str = None
+                    mac_target = None
 
             # Checks for the existence of the target in the network. If it exists, send back the ARP Reply
-            if mac_target_str:
+            if mac_target:
                 datapath_obj = msg.datapath
-                arp_response = Ether(src=str(mac_target_str), dst=pkt.src) \
+                arp_response = Ether(src=str(mac_target), dst=pkt.src) \
                     / ARP(
                         hwtype=arp_layer.hwtype,
                         ptype=arp_layer.ptype,
                         hwlen=arp_layer.hwlen,
                         plen=arp_layer.plen,
                         op="is-at",
-                        hwsrc=mac_target_str.packed,
+                        hwsrc=mac_target.packed,
                         psrc=arp_layer.pdst,
                         hwdst=EUI(pkt.src).packed,
                         pdst=arp_layer.psrc
@@ -327,13 +340,13 @@ def process_event(packet_in_event):
 
                     # A DHCP Offer packet is tailored specifically for the new host.
                     dhcp_offer = Ether(src=str(mac_service), dst=pkt.src) \
-                                 / IP(src=str(ipv4_service), dst="255.255.255.255") \
-                                 / UDP() \
-                                 / BOOTP(
-                        op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags,
-                        sname=str(controller_uuid), yiaddr=str(client_info["ipv4"]), chaddr=bootp_layer.chaddr
-                    ) \
-                                 / DHCP(
+                        / IP(src=str(ipv4_service), dst="255.255.255.255") \
+                        / UDP() \
+                        / BOOTP(
+                            op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags,
+                            sname=str(controller_uuid), yiaddr=str(client_info["ipv4"]), chaddr=bootp_layer.chaddr
+                        ) \
+                        / DHCP(
                         options=[
                             ("message-type", "offer"),
                             ("server_id", str(ipv4_service)),
@@ -342,7 +355,7 @@ def process_event(packet_in_event):
                             ("router", str(ipv4_service)),
                             ("hostname", "{:d}".format(host_database_id).encode("ascii")),
                             ("name_server", str(ipv4_service)),
-                            #("name_server", "8.8.8.8"),
+                            # ("name_server", "8.8.8.8"),
                             ("domain", "archsdn".encode("ascii")),
                             ("renewal_time", 21600),
                             ("rebinding_time", 37800),
@@ -371,7 +384,8 @@ def process_event(packet_in_event):
                 elif dhcp_layer_options['message-type'] is 3:  # A DHCP Request packet was received
                     try:
                         _log.debug(
-                            "Received DHCP Request packet from host with MAC {:s} on switch {:016X} at port {:d}".format(
+                            "Received DHCP Request packet from host with MAC {:s} "
+                            "on switch {:016X} at port {:d}".format(
                                 pkt.src, datapath_id, pkt_in_port
                             )
                         )
@@ -386,23 +400,24 @@ def process_event(packet_in_event):
 
                         #  Sending DHCP Ack to host
                         dhcp_ack = Ether(src=str(mac_service), dst=pkt.src) \
-                                   / IP(src=str(ipv4_service), dst="255.255.255.255") \
-                                   / UDP() / BOOTP(
-                            op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags, yiaddr=str(client_ipv4),
-                            chaddr=EUI(pkt.src).packed
-                        ) / DHCP(
-                            options=[
-                                ("message-type", "ack"),
-                                ("server_id", str(ipv4_service)),
-                                ("lease_time", 43200),
-                                ("subnet_mask", str(ipv4_network.netmask)),
-                                ("router", str(ipv4_service)),
-                                ("hostname", "{:d}".format(client_id).encode("ascii")),
-                                ("name_server", str(ipv4_service)),
-                                ("name_server", "8.8.8.8"),
-                                "end",
-                            ]
-                        )
+                            / IP(src=str(ipv4_service), dst="255.255.255.255") \
+                            / UDP() / BOOTP(
+                                op="BOOTREPLY", xid=bootp_layer.xid, flags=bootp_layer.flags, yiaddr=str(client_ipv4),
+                                chaddr=EUI(pkt.src).packed
+                            ) \
+                            / DHCP(
+                                options=[
+                                    ("message-type", "ack"),
+                                    ("server_id", str(ipv4_service)),
+                                    ("lease_time", 43200),
+                                    ("subnet_mask", str(ipv4_network.netmask)),
+                                    ("router", str(ipv4_service)),
+                                    ("hostname", "{:d}".format(client_id).encode("ascii")),
+                                    ("name_server", str(ipv4_service)),
+                                    ("name_server", "8.8.8.8"),
+                                    "end",
+                                ]
+                            )
                         pad = Padding(load=" " * (300 - len(dhcp_ack)))
                         dhcp_ack = dhcp_ack / pad
 
@@ -480,8 +495,7 @@ def process_event(packet_in_event):
                 )
             elif pkt_ipv4_dst in ipv4_network:  # If the destination IP belongs to the network.
                 # Opens a bi-directional tunnel to target, using the same path in both directions.
-                host_not_found_in_sector = False
-                host_not_found_in_network = False
+                target_host_not_found_in_sector = False
                 try:
                     addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
                     target_switch_id = addr_info_dst["datapath"]
@@ -490,7 +504,11 @@ def process_event(packet_in_event):
                     host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
 
                     # Construct a BiDirectional Path between Host A and Host B.
-                    bidirectional_path = sector.construct_bidirectional_path(host_a_entity_id, host_b_entity_id)
+                    bidirectional_path = sector.construct_bidirectional_path(
+                        host_a_entity_id,
+                        host_b_entity_id,
+                        allocated_bandwith=100
+                    )
 
                     # Allocate MPLS label for tunnel
                     if len(bidirectional_path) >= 3:
@@ -524,43 +542,243 @@ def process_event(packet_in_event):
                     )
 
                 except database.AddressNotRegistered:
-                    host_not_found_in_sector = True
+                    target_host_not_found_in_sector = True
 
-                if host_not_found_in_sector:
-                    try:
-                        # If the target host does not exist in the same sector, it is necessary to start a parallel
-                        #  process which will implement the cross-sector ICMP service between the hosts.
+                if target_host_not_found_in_sector:
+                    # If the target host does not exist in the same sector, it is necessary to start a parallel
+                    #  process which will implement the cross-sector ICMP service between the hosts.
+                    active_icmp4_tasks = globals.scenario_implementation_tasks["IPv4"]["ICMP"]
+                    # Query host info details directly from foreign sector
 
-                        addr_info = central.query_address_info(ipv4=pkt_ipv4_dst)
-                        raise Exception(
-                            "Support for hosts in other sectors, is Not implemented {}.".format(str(addr_info))
-                        )
+                    def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id):
+                        try:
+                            start_time = time.time()
+                            target_ipv4 = global_path_search_id[2]
+                            target_host_info = central.query_address_info(ipv4=target_ipv4)
+                            host_a_entity_id = sector.query_connected_entity_id(dp_id, p_in_port)
+                            target_sector_id = target_host_info.controller_id
+                            adjacent_sectors_ids = sector.query_sectors_ids()
 
-                    except central.NoResultsAvailable:
-                        _log.error("Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
-                        host_not_found_in_network = True
+                            if len(adjacent_sectors_ids) == 0:
+                                raise Exception("No adjacent sectors available.")
 
-                if host_not_found_in_network:
-                    # If the destination IP is not registered at the central manager, return ICMP Host Unreachable.
-                    icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                                 / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                                 / ICMP(
-                        type="dest-unreach",
-                        code="host-unreachable",
-                        id=icmp_layer.id,
-                        seq=icmp_layer.seq,
-                    ) \
-                                 / Raw(data_layer.load)
+                            if target_sector_id in adjacent_sectors_ids:
+                                # If the target sector IS adjacent to this sector, contact it directly and establish
+                                #  a path
+                                bidirectional_path = sector.construct_bidirectional_path(
+                                    host_a_entity_id,
+                                    target_sector_id,
+                                    allocated_bandwith=100
+                                )
 
-                    datapath_obj.send_msg(
-                        datapath_ofp_parser.OFPPacketOut(
-                            datapath=msg.datapath,
-                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                            in_port=datapath_ofp.OFPP_CONTROLLER,
-                            actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
-                            data=bytes(icmp_reply)
-                        )
+                                # Allocate MPLS label for tunnel
+                                if len(bidirectional_path) >= 3:
+                                    local_mpls_label = globals.alloc_mpls_label_id()
+                                else:
+                                    local_mpls_label = None
+
+                                # Knowing which switch connects to the sector and through which port
+                                (switch_id, _, port_out) = bidirectional_path.path[-2]
+                                selected_sector_proxy = p2p_requests.get_controller_proxy(target_sector_id)
+                                service_activation_result = selected_sector_proxy.activate_scenario(
+                                    {
+                                        "global_path_search_id": global_path_search_id,
+                                        "sector_requesting_service": str(controller_uuid),
+                                        "mpls_label": local_mpls_label,
+                                        "hash_val": globals.get_hash_val(switch_id, port_out),
+                                    }
+                                )
+
+                                if service_activation_result["success"]:
+                                    local_service_scenario = services.icmpv4_flow_activation(
+                                        bidirectional_path,
+                                        local_mpls_label,
+                                        target_ipv4
+                                    )
+
+                                    globals.active_sector_scenarios[id(local_service_scenario)] = local_service_scenario
+                                    globals.active_remote_scenarios[global_path_search_id] = (
+                                        (id(local_service_scenario),), (target_sector_id,)
+                                    )
+
+                                    _log.info(
+                                        "Remote Scenario with ID {:s} is now active. Implemented in {:s}"
+                                        "".format(
+                                            str(global_path_search_id),
+                                            time.ctime(time.time() - start_time)
+                                        )
+                                    )
+                                else:
+                                    _log.error(
+                                        "Cannot establish an ICMPv4 path to sector {:s}.".format(
+                                            str(target_sector_id)
+                                        )
+                                    )
+
+                            else:
+                                # If the target sector IS NOT adjacent to this sector, lets select the best adjacent
+                                #   sector used in the past...
+                                while len(adjacent_sectors_ids):
+                                    for sector_id in adjacent_sectors_ids:
+                                        if sector_id not in globals.QValues:
+                                            globals.QValues[sector_id] = {}
+
+                                    sectors_never_used = tuple(
+                                        filter(
+                                            (lambda sec: str(target_host_info.ipv4) not in globals.QValues[sec]),
+                                            adjacent_sectors_ids
+                                        )
+                                    )
+                                    if len(sectors_never_used):
+                                        selected_sector_id = sectors_never_used[0]
+
+                                    else:
+                                        selected_sector_id = max(
+                                            adjacent_sectors_ids,
+                                            key=(lambda ent: globals.QValues[ent][str(target_host_info.ipv4)])
+                                        )
+                                    adjacent_sectors_ids.remove(selected_sector_id)
+
+                                    bidirectional_path = sector.construct_bidirectional_path(
+                                        host_a_entity_id,
+                                        selected_sector_id,
+                                        allocated_bandwith=100
+                                    )
+
+                                    assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
+                                    # Allocate MPLS label for tunnel
+                                    if len(bidirectional_path) >= 3:
+                                        local_mpls_label = globals.alloc_mpls_label_id()
+                                    else:
+                                        local_mpls_label = None
+
+                                    selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
+                                    service_activation_result = selected_sector_proxy.activate_scenario(
+                                        {
+                                            "global_path_search_id": global_path_search_id,
+                                            "sector_calling": str(controller_uuid),
+                                            "type": "ICMPv4",
+                                            "mpls_label": local_mpls_label
+                                        }
+                                    )
+                                    forward_q_value = service_activation_result["qvalue"]
+
+                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
+                                    if kspl:
+                                        if kspl > len(bidirectional_path):
+                                            globals.set_known_shortest_path(
+                                                controller_uuid,
+                                                pkt_ipv4_dst,
+                                                len(bidirectional_path)
+                                            )
+                                    else:
+                                        globals.set_known_shortest_path(
+                                            controller_uuid,
+                                            pkt_ipv4_dst,
+                                            len(bidirectional_path)
+                                        )
+                                    assert kspl, "kspl cannot be Zero or None."
+
+                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
+
+                                    reward = bidirectional_path.remaining_bandwidth_average / kspl * \
+                                        len(bidirectional_path)
+
+                                    old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
+                                    new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                    globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+
+                                    _log.debug(
+                                        "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                        "".format(
+                                            old_q_value, new_q_value, reward, forward_q_value
+                                        )
+                                    )
+
+                                    if not service_activation_result["success"]:
+                                        _log.error(
+                                            "Failed to implement path to host {:s} at sector {:s}. Reason {:s}."
+                                            "".format(
+                                                target_host_info.name,
+                                                str(target_host_info.controller_id),
+                                                service_activation_result["reason"]
+                                            )
+                                        )
+
+                                        if len(adjacent_sectors_ids) == 0:
+                                            _log.error(
+                                                "Adjacent sectors alternatives is exhausted. "
+                                                "Cannot establish ICMPv4 communication to sector {:s}".format(
+                                                    str(target_sector_id)
+                                                )
+                                            )
+
+                                    else:
+                                        local_service_scenario = services.icmpv4_flow_activation(
+                                            bidirectional_path,
+                                            local_mpls_label,
+                                            target_ipv4
+                                        )
+
+                                        globals.active_sector_scenarios[
+                                            id(local_service_scenario)] = local_service_scenario
+                                        globals.active_remote_scenarios[global_path_search_id] = (
+                                            (id(local_service_scenario),), (selected_sector_id,)
+                                        )
+
+                                        _log.info(
+                                            "Remote Scenario with ID {:s} is now active. Implemented in {:s}"
+                                            "".format(
+                                                str(global_path_search_id),
+                                                time.ctime(time.time() - start_time)
+                                            )
+                                        )
+                        except central.NoResultsAvailable:
+                            _log.error(
+                                "Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
+                            custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+                        except PathNotFound:
+                            _log.error("Failed to activate path. An available path was not found in the network.")
+                            custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+                        except Exception as ex:
+                            _log.error("Failed to activate path. Reason {:s}.".format(str(ex)))
+                            custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+                        finally:
+                            if global_path_search_id in active_icmp4_tasks:
+                                del active_icmp4_tasks[global_path_search_id]
+                            else:
+                                assert False, "global_path_search_id {:s} not in active_icmp4_tasks".format(
+                                    str(global_path_search_id)
+                                )
+                    #  End of Task Definition
+
+                    global_path_search_id = (
+                        str(controller_uuid),
+                        pkt_ipv4_src,
+                        pkt_ipv4_dst,
+                        "ICMPv4"
                     )
+
+                    if global_path_search_id in globals.active_remote_scenarios:
+                        error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(
+                            str(global_path_search_id))
+                        _log.warning(error_str)
+
+                    elif global_path_search_id not in active_icmp4_tasks:
+                        active_icmp4_tasks[global_path_search_id] = hub.spawn(
+                            remote_host_icmpv4_task, datapath_id, pkt_in_port, global_path_search_id
+                        )
+
+                    else:
+                        _log.warning(
+                            "ICMPv4 service task is already running for the ipv4 source/target pair "
+                            "({:s}, {:s}).".format(
+                                str(pkt_ipv4_src), str(pkt_ipv4_dst)
+                            )
+                        )
 
             else:
                 # If the destination IP is in a different network, return ICMP Network Unreachable
@@ -622,12 +840,13 @@ def process_event(packet_in_event):
                 try:
                     client_info = central.query_client_info(controller_uuid, client_id)
                     dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                                / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                                / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-                                / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='ok',
-                                      an=DNSRR(rrname=DNSQR_layer.qname, rdata=str(client_info["ipv4"]))
-                                      )
+                        / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                        / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
+                        / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='ok',
+                              an=DNSRR(rrname=DNSQR_layer.qname, rdata=str(client_info["ipv4"]))
+                              )
                 except database.ClientNotRegistered:
+                    # TODO: Query sector for remote host name. Remote hosts are not registered at the local database.
                     dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
                                 / IP(src=str(ipv4_service), dst=ip_layer.src) \
                                 / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
@@ -650,7 +869,7 @@ def process_event(packet_in_event):
 
             elif pkt_ipv4_dst in ipv4_network:  # If the destination IP belongs to the network.
                 # Opens a bi-directional tunnel to target, using the same path in both directions.
-                host_not_found_in_sector = False
+                target_host_not_found_in_sector = False
                 try:
                     addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
                     target_switch_id = addr_info_dst["datapath"]
@@ -695,9 +914,9 @@ def process_event(packet_in_event):
                     )
 
                 except database.AddressNotRegistered:
-                    host_not_found_in_sector = True
+                    target_host_not_found_in_sector = True
 
-                if host_not_found_in_sector:
+                if target_host_not_found_in_sector:
                     try:
                         # If the target host does not exist in the same sector, it is necessary to start a parallel
                         #  process which will implement the cross-sector ICMP service between the hosts.

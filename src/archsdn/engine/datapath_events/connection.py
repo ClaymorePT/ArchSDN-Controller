@@ -150,20 +150,25 @@ def process_event(dp_event):
             "Trying to disconnect an unregistered Switch: {:016X}".format(datapath_id)
 
         # Kill services in the sector which use this Switch
+        ipv4_services = globals.mapped_services["IPv4"]
+        mpls_services = globals.mapped_services["MPLS"]
         services_to_kill = []
-        for service_type in globals.mapped_services["IPv4"]:
-            for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
-                if globals.mapped_services["IPv4"][service_type][service_tuple_id].has_entity(datapath_id):
+
+        for service_type in ipv4_services:
+            for service_tuple_id in ipv4_services[service_type]:
+                if ipv4_services[service_type][service_tuple_id].has_entity(datapath_id):
                     services_to_kill.append(("IPv4", service_type, service_tuple_id))
-        for service_tuple_id in globals.mapped_services["MPLS"]:
-            if globals.mapped_services["MPLS"][service_tuple_id].has_entity(datapath_id):
-                services_to_kill.append(("MPLS", None, service_tuple_id))
+
+        for service_type in mpls_services:
+            for service_tuple_id in mpls_services[service_type]:
+                if mpls_services[service_type][service_tuple_id].has_entity(datapath_id):
+                    services_to_kill.append(("MPLS", service_type, service_tuple_id))
 
         for (service_layer, service_type, service_tuple_id) in services_to_kill:
             if service_layer == "IPv4":
-                del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                del ipv4_services[service_type][service_tuple_id]
             elif service_layer == "MPLS":
-                del globals.mapped_services[service_layer][service_tuple_id]
+                del mpls_services[service_type][service_tuple_id]
 
         sector.remove_entity(datapath_id)
         database.remove_datapath(datapath_id)

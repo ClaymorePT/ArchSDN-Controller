@@ -13,25 +13,26 @@ import logging
 from threading import RLock
 from functools import partial
 from abc import ABC, abstractmethod
-from copy import copy
+from copy import copy, deepcopy
+from ipaddress import IPv4Address, IPv6Address
 
 import networkx as nx
 
 from archsdn.helpers import logger_module_name
 from archsdn.engine.entities import \
-    Switch, Host, Sector
+    Switch, Host, Sector, RemoteHost
 
 from archsdn.engine.exceptions import \
     EntityAlreadyRegistered, EntityNotRegistered, \
     LinkException, SwitchPortAlreadyConnected, PortNotUsed, PortNotRegistered, \
-    EntitiesAlreadyConnected, EntitiesNotConnected, PathNotFound, CannotCreateScenario
+    EntitiesAlreadyConnected, EntitiesNotConnected, PathNotFound
 
 __log = logging.getLogger(logger_module_name(__file__))
 
 __net = None
 __lock = None
 __entities = None
-__suported_entities = {Switch, Host, Sector}
+__suported_entities = {Switch, Host, Sector, RemoteHost}
 __suported_entities_str = ", ".join((str(i) for i in __suported_entities))
 
 __sector_initialized = False
@@ -68,7 +69,12 @@ class SectorPath(ABC):
 
     @property
     @abstractmethod
-    def service_q_value(self):
+    def remaining_bandwidth_average(self):
+        pass
+
+    @property
+    @abstractmethod
+    def path(self):
         pass
 
     @abstractmethod
@@ -85,11 +91,12 @@ class SectorPath(ABC):
 
 
 class __OneDirectionPath(SectorPath):
-    def __init__(self, sector_path, bandwidth_dealocation_callback):
+    def __init__(self, sector_path, bandwidth_dealocation_callback, remaining_bandwidth_average=None):
         assert len(sector_path) >= 3, "sector_path length expected to be equal or higher than 3"
 
         self.__sector_path = sector_path
         self.__bandwidth_dealocation_callback = bandwidth_dealocation_callback
+        self.__remaining_bandwidth_average = remaining_bandwidth_average
 
     def __del__(self):
         self.__bandwidth_dealocation_callback()
@@ -116,8 +123,13 @@ class __OneDirectionPath(SectorPath):
             return tuple((copy(elem) for elem in self.__sector_path[1:-1]))
 
     @property
-    def service_q_value(self):
-        return 1
+    def path(self):
+        return deepcopy(self.__sector_path)
+
+    @property
+    def remaining_bandwidth_average(self):
+        return self.__remaining_bandwidth_average
+
 
     def has_entity(self, entity_id):
         if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
@@ -201,11 +213,12 @@ class __OneDirectionPath(SectorPath):
 
 
 class __BiDirectionPath(SectorPath):
-    def __init__(self, sector_path, bandwidth_dealocation_callback):
+    def __init__(self, sector_path, bandwidth_dealocation_callback, remaining_bandwidth_average=None):
         assert len(sector_path) >= 3, "sector_path length expected to be equal or higher than 3"
 
         self.__sector_path = sector_path
         self.__bandwidth_dealocation_callback = bandwidth_dealocation_callback
+        self.__remaining_bandwidth_average = remaining_bandwidth_average
 
     def __del__(self):
         self.__bandwidth_dealocation_callback()
@@ -232,8 +245,12 @@ class __BiDirectionPath(SectorPath):
             return tuple((copy(elem) for elem in self.__sector_path[1:-1]))
 
     @property
-    def service_q_value(self):
-        return 1
+    def path(self):
+        return deepcopy(self.__sector_path)
+
+    @property
+    def remaining_bandwidth_average(self):
+        return self.__remaining_bandwidth_average
 
     def has_entity(self, entity_id):
         if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
@@ -545,7 +562,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
 
         # 3rd Case - (Switch, Sector)
         elif isinstance(entity_a, Switch) and isinstance(entity_b, Sector):
-            missing_args = tuple(filter((lambda arg: arg not in kwargs), ('switch_port_no', )))
+            missing_args = tuple(filter((lambda arg: arg not in kwargs), ('switch_port_no', 'hash_val')))
             if len(missing_args):
                 raise TypeError("The following arguments are missing: {:s}".format(", ".join(missing_args)))
 
@@ -587,7 +604,8 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 entity_a_id, entity_b_id, kwargs['switch_port_no'],
                 data={
                     'max_speed': max_link_speed,
-                    'available_speed': max_link_speed
+                    'available_speed': max_link_speed,
+                    'hash_val': kwargs['hash_val']
                 }
             )
 
@@ -600,7 +618,8 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 entity_b_id, entity_a_id, kwargs['switch_port_no'],
                 data={
                     'max_speed': max_link_speed,
-                    'available_speed': max_link_speed
+                    'available_speed': max_link_speed,
+                    'hash_val': kwargs['hash_val']
                 }
             )
             __log.debug(
@@ -644,9 +663,34 @@ def query_connected_entity_id(switch_id, port_id):
         raise PortNotUsed()
 
 
+def query_sectors_ids():
+    with __lock:
+        return set(filter((lambda ent_id: ent_id in __entities[Sector]), __net.nodes()))
+
+
+def query_address_host(ipv4=None, ipv6=None):
+    assert not ((ipv4 is None) and (ipv6 is None)), "ipv4 and ipv6 cannot be null at the same time"
+    assert isinstance(ipv4, IPv4Address) or ipv4 is None, "ipv4 is invalid"
+    assert isinstance(ipv6, IPv6Address) or ipv6 is None, "ipv6 is invalid"
+
+    with __lock:
+        res = tuple(
+            filter(
+                (lambda ent: isinstance(ent, (Host, RemoteHost)) and (ent.ipv4 == ipv4 or ent.ipv6 == ipv6)),
+                __net.nodes()
+            )
+        )
+
+        assert len(res) in (0, 1), \
+            "There are too many entities registered with the same network address. ({:s})".format(str(res))
+
+        if len(res) == 0:
+            raise EntityNotRegistered()
+        return res[0]
+
+
 def is_port_connected(switch_id, port_id):
     '''
-
     :param switch_id: Switch entity ID
     :param port_id: Switch Port
     :return:
@@ -793,7 +837,7 @@ def construct_unidirectional_path(
             assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
                 len(shortest_path)
             )
-
+            remaining_bandwidth_average = []
             #  Create a path with ports, using the calculated shortest_path
             #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
             if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
@@ -816,6 +860,14 @@ def construct_unidirectional_path(
                     (switch_id, tail_id, port_out),
                 ]
                 if allocated_bandwith:
+                    link_data = __net[head_id][switch_id][port_in]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                    )
+                    link_data = __net[switch_id][tail_id][port_out]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                    )
                     __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
                     __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
 
@@ -838,15 +890,27 @@ def construct_unidirectional_path(
                     if before_ent_id == head_id:
                         edges.append((before_ent_id, switch_id, port_in))
                         if allocated_bandwith:
+                            link_data = __net[before_ent_id][switch_id][port_in]['data']
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                            )
                             __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
                     elif after_ent_id == tail_id:
                         edges.append((switch_id, after_ent_id, port_out))
                         if allocated_bandwith:
+                            link_data = __net[switch_id][after_ent_id][port_out]['data']
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                            )
                             __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
 
                     path.append((switch_id, port_in, port_out))
                     edges.append((switch_id, after_ent_id, port_out))
                     if allocated_bandwith:
+                        link_data = __net[switch_id][after_ent_id][port_out]['data']
+                        remaining_bandwidth_average.append(
+                            (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                        )
                         __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
                 path.append(tail_id)
 
@@ -857,11 +921,14 @@ def construct_unidirectional_path(
                             if __net.has_edge(from_ent, to_ent, network_port):
                                 __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
 
+            assert len(remaining_bandwidth_average), "remaining_bandwidth_average length is zero. This cannot be..."
+
             sector_path = __OneDirectionPath(
                 path,
                 partial(
                     remove_scenario
-                )
+                ),
+                sum(remaining_bandwidth_average) * 100.0 / len(remaining_bandwidth_average)
             )
 
             __log.debug(
@@ -890,7 +957,9 @@ def construct_unidirectional_path(
 def construct_bidirectional_path(
         origin_id,
         target_id,
-        allocated_bandwith = None
+        allocated_bandwith=None,
+        sector_a_hash_val=None,
+        sector_b_hash_val=None,
 ):
     '''
         Constructs the scenario specified by :param scenario_type.
@@ -899,6 +968,8 @@ def construct_bidirectional_path(
         :param origin_id:
         :param target_id:
         :param allocated_bandwith:
+        :param sector_a_hash_val:
+        :param sector_b_shash_val:
         :return:
     '''
     try:
@@ -913,17 +984,42 @@ def construct_bidirectional_path(
             net_cpy = __net.copy()
             #__log.debug("Network copy:\n  {:s}".format("\n  ".join(tuple((str(edge) for edge in net_cpy.edges(data=True))))))
 
+            # If hash values are provided,
+            for (src_id, hash_val) in ((origin_id, sector_a_hash_val), (target_id, sector_b_hash_val)):
+                if isinstance(query_entity(src_id), Switch) and hash_val is not None:
+                    remove_links = []
+                    for dst_id in net_cpy[src_id]:
+                        for port_id in net_cpy[src_id][dst_id]:
+                            if net_cpy[src_id][dst_id][port_id]['data']['hash_val'] != hash_val:
+                                remove_links.append((dst_id, port_id))
+
+                    for (dst_id, port_id) in remove_links:
+                        net_cpy.remove_edge(src_id, dst_id, port_id)
+                        __log.debug("Removed edge {:s} from temporary topology.".format(str((src_id, dst_id, port_id))))
+                        net_cpy.remove_edge(dst_id, src_id, port_id)
+                        __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, src_id, port_id))))
+
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
                 for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
                     if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
                         net_cpy.remove_edge(node_a, node_b, port)
+                        __log.debug(
+                            "Removing edge {:s} for lacking enough bandwidth."
+                            " {:d} is required."
+                            " Only {:d} is available.".format(
+                                str((node_a, node_b, port)),
+                                allocated_bandwith,
+                                net_cpy[node_a][node_b][port]['data']['available_speed']
+                            )
+                        )
 
             shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
             assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
                 len(shortest_path)
             )
 
+            remaining_bandwidth_average = []
             #  Create a path with ports, using the calculated shortest_path
             #  (host or sector, in_port switch), (port_in, switch id, port out), (host or sector, in_port switch)
             if len(shortest_path) == 3:  # If the path only has 3 elements (source, middle switch, destiny)
@@ -948,6 +1044,22 @@ def construct_bidirectional_path(
                     (tail_id, switch_id, port_out),
                 ]
                 if allocated_bandwith:
+                    link_data = __net[switch_id][head_id][port_in]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                    )
+                    link_data = __net[head_id][switch_id][port_in]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                    )
+                    link_data = __net[switch_id][tail_id][port_out]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                    )
+                    link_data = __net[tail_id][switch_id][port_out]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                    )
                     __net[switch_id][head_id][port_in]['data']['available_speed'] -= allocated_bandwith
                     __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
                     __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
@@ -973,21 +1085,37 @@ def construct_bidirectional_path(
                     if before_ent_id == head_id:
                         edges.append((before_ent_id, switch_id, port_in))
                         if allocated_bandwith:
+                            link_data = __net[before_ent_id][switch_id][port_in]['data']
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                            )
                             __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
                     elif after_ent_id == tail_id:
                         edges.append((after_ent_id, switch_id, port_out))
                         if allocated_bandwith:
+                            link_data = __net[after_ent_id][switch_id][port_out]['data']
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                            )
                             __net[after_ent_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
 
                     edges.append((switch_id, before_ent_id, port_in))
                     edges.append((switch_id, after_ent_id, port_out))
                     if allocated_bandwith:
+                        link_data = __net[switch_id][before_ent_id][port_in]['data']
+                        remaining_bandwidth_average.append(
+                            (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                        )
                         __net[switch_id][before_ent_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        link_data = __net[switch_id][after_ent_id][port_out]['data']
+                        remaining_bandwidth_average.append(
+                            (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
+                        )
                         __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
 
                 path.append(tail_id)
 
-            def remove_scenario():
+            def remove_scenario(allocated_bandwith, edges):
                 with __lock:
 
                     if allocated_bandwith:
@@ -995,15 +1123,20 @@ def construct_bidirectional_path(
                             if __net.has_edge(from_ent, to_ent, network_port):
                                 __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
 
+            assert len(remaining_bandwidth_average), "remaining_bandwidth_average length is zero. This cannot be..."
+
             sector_path = __BiDirectionPath(
                 path,
                 partial(
-                    remove_scenario
-                )
+                    remove_scenario,
+                    allocated_bandwith,
+                    edges
+                ),
+                sum(remaining_bandwidth_average) * 100.0 / len(remaining_bandwidth_average) if allocated_bandwith else None
             )
 
             __log.debug(
-                "Path established ([{:s}]) using edges ([{:s}]) {:s}.".format(
+                "Path allocated ([{:s}]) using edges ([{:s}]) {:s}.".format(
                     "][".join(tuple((str(i) for i in path))),
                     "][".join(tuple((str(i) for i in edges))),
                     "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
@@ -1016,9 +1149,8 @@ def construct_bidirectional_path(
             "Path not found between entities {:s} and {:s}{:s}.".format(
                 str(origin_id),
                 str(target_id),
-                " capable of accommodating {:d} for bandwidth reservation".format(
-                    allocated_bandwith
-                ) if allocated_bandwith else ""
+                " capable of accommodating {:d} for bandwidth reservation".format(allocated_bandwith)
+                if allocated_bandwith else ""
             )
         )
         raise PathNotFound()

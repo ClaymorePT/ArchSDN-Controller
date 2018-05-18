@@ -19,6 +19,7 @@ import ryu.app.ofctl.api as ryu_api
 from archsdn import central
 from archsdn import database
 from archsdn import engine
+from archsdn import p2p_requests
 from archsdn.helpers import custom_logging_callback, logger_module_name
 
 # MAC Sword separator definition
@@ -36,7 +37,7 @@ _log = logging.getLogger(logger_module_name(__file__))
 default_configs = {
     "id": uuid4(),
     "controllerIP": IPv4Address("0.0.0.0"),
-    "controllerPort": 12345,
+    "controllerPort": 54321,
     "centralIP": None,
     "centralIP_port": 12345,
     "dbLocation": ":memory:",
@@ -46,6 +47,7 @@ default_configs = {
 
 def _quit_callback(signum, frame):
     logging.shutdown()
+    p2p_requests.shutdown_server()
     sys.exit()
 
 
@@ -71,6 +73,7 @@ class ArchSDN(RyuApp):
 
             # ArchSDN CLI options evaluation
             archSDN_cli_opts = dict(tuple(((key, CONF[key]) for key in CONF if "archSDN" in key and CONF[key])))
+            _log.info(str(archSDN_cli_opts))
 
             if 'archSDN_id' in archSDN_cli_opts:
                 default_configs['id'] = UUID(archSDN_cli_opts['archSDN_id'])
@@ -78,7 +81,7 @@ class ArchSDN(RyuApp):
             if 'archSDN_controllerIP' in archSDN_cli_opts:
                 default_configs['controllerIP'] = ip_address(archSDN_cli_opts['archSDN_controllerIP'])
 
-            if 'archSDN_controllerIPPort' in archSDN_cli_opts:
+            if 'archSDN_controllerPort' in archSDN_cli_opts:
                 default_configs['controllerPort'] = int(archSDN_cli_opts['archSDN_controllerPort'])
 
             if 'archSDN_centralIP' in archSDN_cli_opts:
@@ -134,6 +137,9 @@ class ArchSDN(RyuApp):
                 if default_configs['controllerIP'].version == 4 else None
             ipv6_info = (default_configs['controllerIP'], default_configs['controllerPort']) \
                 if default_configs['controllerIP'].version == 6 else None
+
+            p2p_requests.initialize_server(default_configs['controllerIP'], default_configs['controllerPort'])
+
             try:
                 central.register_controller(
                     controller_id=default_configs['id'],

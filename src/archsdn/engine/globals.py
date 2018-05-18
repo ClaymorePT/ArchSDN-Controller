@@ -2,6 +2,8 @@ import logging
 from archsdn.helpers import logger_module_name
 from threading import Lock
 
+import uuid
+
 _log = logging.getLogger(logger_module_name(__file__))
 
 # Table Flows Types
@@ -40,20 +42,79 @@ TABLE_3_MPLS_SWITCH_PRIORITY = 3000
 TABLE_3_MPLS_POP_PRIORITY = 2000
 TABLE_3_MPLS_CHANGE_PRIORITY = 1000
 
-TABLE_5_LAYER_5_PRIORITY = 4000
-TABLE_5_LAYER_4_SPECIFIC_PRIORITY = 3500
-TABLE_5_LAYER_4_NETWORK_PRIORITY = 3250
-TABLE_5_LAYER_4_PRIORITY = 3000
-TABLE_5_LAYER_3_SPECIFIC_PRIORITY = 2500
-TABLE_5_LAYER_3_GENERIC_PRIORITY = 2250
-TABLE_5_LAYER_3_DEFAULT_PRIORITY = 2000
-TABLE_5_VLAN_PRIORITY = 1000
+TABLE_4_LAYER_5_PRIORITY = 4000
+TABLE_4_LAYER_4_SPECIFIC_PRIORITY = 3500
+TABLE_4_LAYER_4_NETWORK_PRIORITY = 3250
+TABLE_4_LAYER_4_PRIORITY = 3000
+TABLE_4_LAYER_3_SPECIFIC_PRIORITY = 2500
+TABLE_4_LAYER_3_GENERIC_PRIORITY = 2250
+TABLE_4_LAYER_3_DEFAULT_PRIORITY = 2000
+TABLE_4_VLAN_PRIORITY = 1000
 
 TABLE_MISS_PRIORITY = 0
 
 
 # Default kernel configuration
 default_configs = None
+
+
+#Sector QValues
+QValues = {}  # QValues[SectorID][IPv4/IPv6] = Q-Value
+q_alpha = 0.9
+q_beta = 0.1
+
+# Known Shortest Path Length to target
+kspl = {}  # kspl[SectorID][IPv4/IPv6] = minimum length
+
+
+def get_known_shortest_path(sector_id, host_address):
+    if sector_id not in kspl:
+        kspl[sector_id] = {host_address: None}
+    if host_address not in kspl[sector_id]:
+        kspl[sector_id][host_address] = None
+    return kspl[sector_id][host_address]
+
+
+def set_known_shortest_path(sector_id, host_address, path_length):
+    if sector_id not in kspl:
+        kspl[sector_id] = {host_address: path_length}
+    else:
+        kspl[sector_id][host_address] = path_length
+
+
+def get_q_value(sector_id, host_address):
+    if sector_id not in QValues:
+        QValues[sector_id] = {host_address: 0}
+    else:
+        if host_address not in QValues[sector_id]:
+            QValues[sector_id][host_address] = 0
+    return QValues[sector_id][host_address]
+
+
+def set_q_value(sector_id, host_address, value):
+    if sector_id not in QValues:
+        QValues[sector_id] = {host_address: value}
+    else:
+        if host_address not in QValues[sector_id]:
+            QValues[sector_id][host_address] = value
+
+
+def calculate_new_qvalue(old_value, forward_value, reward):
+    return old_value + q_alpha * (reward + q_beta*forward_value - old_value)
+
+
+# Active implementation  scenario tasks
+#  This dictionary keeps a record of the active tasks to implement scenarios which need multiple controllers
+#   coordination
+scenario_implementation_tasks = {
+    "IPv4": {
+        "ICMP": {},
+        "UDP": {},
+        "TCP": {},
+        "*": {},
+    },
+    "MPLS": {}
+}
 
 
 #
@@ -67,14 +128,11 @@ topology_beacons = {}  # __topology_beacons[switch id] = Beacon_Task
 beacons_hash_table = {}  # __beacons_hash_table[hash] = (switch id, port_out)
 
 
-#
-# Active Flows
-#
-# This global is a dictionary and keeps a record of the activated flows in the sector.
-#   The dictionary keys are the cookie_id's of each activated flow, and it indexes the flow and the switch ID where the
-#   flow is activated.
-#
-active_flows = {}  # __active_flows[cookie id] = (flow, switch id)
+def get_hash_val(switch_id, port_id):
+    res = tuple(filter((lambda item: item[1] == (switch_id, port_id)), beacons_hash_table.items()))
+    if res:
+        return res[0][0]
+    raise KeyError("No hash available for specified key.")
 
 
 #
@@ -94,7 +152,10 @@ active_flows = {}  # __active_flows[cookie id] = (flow, switch id)
 #  From Sector to Host (Cross-Sector, Egress)
 #  From Sector to Sector (Cross-Sector, Intermediary)
 #
-active_sector_scenarios = {}  # __active_sector_scenarios[scenario id] = Scenario
+active_sector_scenarios = {}  # active_sector_scenarios[scenario id] = Scenario
+
+active_remote_scenarios = {}
+# active_remote_scenarios[global scenario id] = ((local scenarios ids, ), (sectors_ids who use, ))
 
 
 #
@@ -127,7 +188,10 @@ mapped_services = {
         "TCP": {},
         "*": {},
     },
-    "MPLS": {}
+    "MPLS": {
+        "OneWay": {},
+        "TwoWay": {},
+    }
 }
 
 # __mapped_services[switch_id]["Service"]["service details"] = (tunnel_id or port_out)

@@ -520,6 +520,13 @@ class RPLControllerInformation(ReplyMessage):
     '''
 
     def __init__(self, ipv4, ipv4_port, ipv6, ipv6_port, name, registration_date):
+        assert isinstance(ipv4, (IPv4Address, type(None))), "ipv4 expected to be IPv4Address or None"
+        assert isinstance(ipv6, (IPv6Address, type(None))), "ipv6 expected to be IPv6Address or None"
+        assert isinstance(ipv4_port, (int, type(None))), "ipv4_port expected to be int"
+        assert isinstance(ipv6_port, (int, type(None))), "ipv6_port expected to be int"
+        assert not ((ipv4 is None) and (ipv6 is None)), \
+            "ipv4 and ipv6 cannot be both None. Got {:s} - {:s}".format(repr(ipv4), repr(ipv6))
+
         self.ipv4 = ipv4
         self.ipv4_port = ipv4_port
         self.ipv6 = ipv6
@@ -529,19 +536,19 @@ class RPLControllerInformation(ReplyMessage):
 
     def __getstate__(self):
         return (
-            self.ipv4.packed, self.ipv4_port,
-            self.ipv6.packed, self.ipv6_port,
+            (self.ipv4.packed, self.ipv4_port) if self.ipv4 else None,
+            (self.ipv6.packed, self.ipv6_port) if self.ipv6 else None,
             self.name.encode('ascii'),
             self.registration_date
         )
 
     def __setstate__(self, state):
-        self.ipv4 = IPv4Address(state[0])
-        self.ipv4_port = state[1]
-        self.ipv6 = IPv6Address(state[2])
-        self.ipv6_port = state[3]
-        self.name = state[4].decode('ascii')
-        self.registration_date = state[5]
+        self.ipv4 = IPv4Address(state[0][0]) if state[0] else None
+        self.ipv4_port = state[0][1] if state[0] else None
+        self.ipv6 = IPv6Address(state[1][0]) if state[1] else None
+        self.ipv6_port = state[1][1] if state[1] else None
+        self.name = state[2].decode('ascii')
+        self.registration_date = state[3]
 
 
 class RPLClientInformation(ReplyMessage):

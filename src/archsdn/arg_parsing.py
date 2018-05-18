@@ -100,7 +100,7 @@ def parse_arguments():
     parser.add_argument(
         "-p", "--port",
         help="Controller Port (default: %(default)s)",
-        default=12345,
+        default=54321,
         type=int
     )
     parser.add_argument(

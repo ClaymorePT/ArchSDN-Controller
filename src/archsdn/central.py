@@ -78,46 +78,57 @@ def initialise(central_ip, central_port):
     __location = "tcp://{:s}:{:d}".format(str(central_ip), central_port)
     __semaphore = BoundedSemaphore()
     __context = zmq.Context()
-    __pool = zmq.Poller()
+    #__pool = zmq.Poller()
     __socket = __context.socket(zmq.REQ)
     __socket.connect(__location)
-    __pool.register(__socket, zmq.POLLIN)
+    #__pool.register(__socket, zmq.POLLIN)
     _log.info("Initializing communication to central manager is complete.")
 
 
 def __make_request(obj):
     global __socket
-    assert __semaphore and __context and __location, "communication not initialised"
+    assert __semaphore, "communication not initialised"
 
     obj_byte_seq = blosc.compress(dumps(obj))
-    retries_left = __socket_retries
 
-    while retries_left:
-        __socket.send(obj_byte_seq)
-        events = dict(__pool.poll(__socket_timeout))
+    __socket.send(obj_byte_seq)
+    return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
 
-        if events and events[__socket] == zmq.POLLIN:
-            return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
 
-        else:
-            _log.warning(
-                "No response from central manager, retrying ({:d} out of {:d}) …".format(
-                    __socket_retries - retries_left + 1,
-                    __socket_retries
-                )
-            )
-            __socket.setsockopt(zmq.LINGER, 0)
-            __socket.close()
-            __pool.unregister(__socket)
-            retries_left -= 1
-            if retries_left == 0:
-                _log.error("Central manager seems to be offline. Aborting.")
-                raise ConnectionFailed()
-            _log.warning("Reconnecting and resending...")
-            # Create new connection
-            __socket = __context.socket(zmq.REQ)
-            __socket.connect(__location)
-            __pool.register(__socket, zmq.POLLIN)
+#
+# def __make_request(obj):
+#     global __socket
+#     assert __semaphore and __context and __location, "communication not initialised"
+#
+#     obj_byte_seq = blosc.compress(dumps(obj))
+#     retries_left = __socket_retries
+#
+#     while retries_left:
+#         __socket.send(obj_byte_seq)
+#         events = dict(__pool.poll(__socket_timeout))
+#
+#         if events and events[__socket] == zmq.POLLIN:
+#             return loads(blosc.decompress(__socket.recv(), as_bytearray=True))
+#
+#         else:
+#             _log.warning(
+#                 "No response from central manager, retrying ({:d} out of {:d}) …".format(
+#                     __socket_retries - retries_left + 1,
+#                     __socket_retries
+#                 )
+#             )
+#             __socket.setsockopt(zmq.LINGER, 0)
+#             __socket.close()
+#             __pool.unregister(__socket)
+#             retries_left -= 1
+#             if retries_left == 0:
+#                 _log.error("Central manager seems to be offline. Aborting.")
+#                 raise ConnectionFailed()
+#             _log.warning("Reconnecting and resending...")
+#             # Create new connection
+#             __socket = __context.socket(zmq.REQ)
+#             __socket.connect(__location)
+#             __pool.register(__socket, zmq.POLLIN)
 
 
 def query_central_network_policies():

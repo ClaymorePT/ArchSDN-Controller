@@ -137,6 +137,7 @@ class Switch(Entity):
         if port_no in self.__ports:
             raise PortAlreadyRegistered()
 
+
         self.__ports[port_no] = {
             'hw_addr': hw_addr,
             'name': name,
@@ -147,7 +148,7 @@ class Switch(Entity):
             'supported': supported,
             'peer': peer,
             'curr_speed': curr_speed,
-            'max_speed': max_speed
+            'max_speed': max_speed if max_speed else curr_speed
         }
 
     def remove_port(self, port_no):
@@ -263,3 +264,67 @@ class Sector(Entity):
         self.__ports.remove(mac)
 
 
+class RemoteHost(Entity):
+    def __init__(self, hostname, mac, ipv4=None, ipv6=None):
+        assert isinstance(hostname, str), \
+            "hostname is not str.  Got {:s}".format(repr(hostname))
+        assert len(hostname) != 0, "hostname length cannot be zero"
+        assert isinstance(mac, EUI), \
+            "mac is not an EUI object.  Got {:s}".format(repr(mac))
+        assert isinstance(ipv4, (IPv4Address, type(None))), \
+            "ipv4 is not None or instance of IPv4Address. Got {:s}".format(repr(ipv4))
+        assert isinstance(ipv6, (IPv6Address, type(None))), \
+            "ipv4 is not None or instance of IPv6Address. Got {:s}".format(repr(ipv6))
+        assert not (ipv4 is None and ipv6 is None), "ipv4 and ipv6 cannot be None at the same time"
+
+        self.__hostname = hostname
+        self.__mac = mac
+        self.__ipv4 = ipv4
+        self.__ipv6 = ipv6
+
+    def __str__(self):
+        return "<RemoteHost type> object at address 0x{:x}: hostname= {:s}; mac= {:s}; ipv4= {:s};  ipv6= {:s}".format(
+            id(self), str(self.__hostname), str(self.__mac), str(self.__ipv4), str(self.__ipv6)
+        )
+
+    def __hash__(self):
+        return hash(self.__hostname)
+
+    @property
+    def id(self):
+        '''
+            Gets the RemoteHost Identification
+        '''
+        return self.__hostname
+
+    @property
+    def hostname(self):
+        '''
+
+        :return:
+        '''
+        return self.__hostname
+
+    @property
+    def mac(self):
+        '''
+
+        :return:
+        '''
+        return self.__mac
+
+    @property
+    def ipv4(self):
+        '''
+
+        :return:
+        '''
+        return self.__ipv4
+
+    @property
+    def ipv6(self):
+        '''
+
+        :return:
+        '''
+        return self.__ipv6

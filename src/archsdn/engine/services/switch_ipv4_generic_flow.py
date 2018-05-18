@@ -243,7 +243,7 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=egressing_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_5_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.TABLE_4_LAYER_4_SPECIFIC_PRIORITY,
             match=egressing_switch_ofp_parser.OFPMatch(
                 eth_src=str(host_b_entity_obj.mac), eth_dst=str(host_a_entity_obj.mac), eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
