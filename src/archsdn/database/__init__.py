@@ -8,10 +8,6 @@ __all__ = [
     "remove_datapath",
     "dump_datapth_registered_ids",
     "dump_datapth_registered_clients_ids",
-    "save_flow",
-    "query_flow",
-    "remove_flow",
-    "query_flow_ids",
     "register_client",
     "query_client_info",
     "query_client_id",
@@ -52,10 +48,6 @@ from archsdn.database.internals.datapath import remove as __remove_datapath
 from archsdn.database.internals.datapath import is_registered as __is_datapath_registered
 from archsdn.database.internals.datapath import dump_ids as __dump_datapth_registered_ids
 from archsdn.database.internals.datapath import dump_datapath_clients_ids as __dump_datapth_registered_clients_ids
-from archsdn.database.internals.flow import save as __save_flow
-from archsdn.database.internals.flow import info as __query_flow
-from archsdn.database.internals.flow import remove as __remove_flow
-from archsdn.database.internals.flow import get_cookie_ids as __get_flow_ids
 from archsdn.database.internals.clients import register as __register_client
 from archsdn.database.internals.clients import query_info as __query_client_info
 from archsdn.database.internals.clients import query_client_id as __query_client_id
@@ -87,10 +79,6 @@ _callbacks = {
     "remove_datapath": __remove_datapath,
     "dump_datapth_registered_ids": __dump_datapth_registered_ids,
     "dump_datapth_registered_clients_ids": __dump_datapth_registered_clients_ids,
-    "save_flow": __save_flow,
-    "query_flow": __query_flow,
-    "remove_flow": __remove_flow,
-    "query_flow_ids": __get_flow_ids,
     "register_client": __register_client,
     "query_client_info": __query_client_info,
     "query_client_id": __query_client_id,

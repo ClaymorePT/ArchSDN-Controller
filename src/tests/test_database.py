@@ -74,11 +74,11 @@ class DatabaseDatapathsOperations(unittest.TestCase):
 
 
     def test_dump_datapath_ids(self):
-            database.register_datapath(datapath_id=1, ipv4_info=(IPv4Address("192.168.1.1"), 12345),
-                                       ipv6_info=(IPv6Address(1), 12345))
-            database.register_datapath(datapath_id=2, ipv4_info=(IPv4Address("192.168.1.2"), 12345),
-                                       ipv6_info=(IPv6Address(2), 12345))
-            self.assertEquals(database.dump_datapth_registered_ids(), (1,2))
+        database.register_datapath(datapath_id=1, ipv4_info=(IPv4Address("192.168.1.1"), 12345),
+                                   ipv6_info=(IPv6Address(1), 12345))
+        database.register_datapath(datapath_id=2, ipv4_info=(IPv4Address("192.168.1.2"), 12345),
+                                   ipv6_info=(IPv6Address(2), 12345))
+        self.assertEqual(database.dump_datapth_registered_ids(), (1, 2))
 
 
     def test_query_datapath_info(self):
@@ -146,8 +146,8 @@ class DatabaseClientsOperations(unittest.TestCase):
         client_id_2 = database.register_client(datapath_id=1, port_id=2, mac=EUI(13))
         client_id_3 = database.register_client(datapath_id=2, port_id=1, mac=EUI(14))
         client_id_4 = database.register_client(datapath_id=2, port_id=2, mac=EUI(15))
-        self.assertEquals(database.dump_datapth_registered_clients_ids(1), (client_id_1, client_id_2))
-        self.assertEquals(database.dump_datapth_registered_clients_ids(2), (client_id_3, client_id_4))
+        self.assertEqual(database.dump_datapth_registered_clients_ids(1), (client_id_1, client_id_2))
+        self.assertEqual(database.dump_datapth_registered_clients_ids(2), (client_id_3, client_id_4))
 
 
     def test_double_register_client(self):
@@ -215,157 +215,6 @@ class DatabaseClientsOperations(unittest.TestCase):
         self.assertEqual(address_info["port"], 1)
         self.assertLessEqual(address_info["registration_date"], time.localtime())
 
-class DatabaseFlowsOperations(unittest.TestCase):
-    def setUp(self):
-        database.initialise(location=database_location, controller_id=UUID(int=1))
-        database.register_datapath(datapath_id=1, ipv4_info=(IPv4Address("192.168.1.1"), 12345),
-                                   ipv6_info=(IPv6Address(1), 12345))
-
-    def tearDown(self):
-        database.close()
-
-    def test_save_flow(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        datapath_id = 1
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-        database.save_flow(datapath_id=datapath_id, flow_description=testing_flow.to_jsondict())
-
-    def test_query_flow_info(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        datapath_id = 1
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id = database.save_flow(datapath_id=datapath_id, flow_description=testing_flow.to_jsondict())
-        flow_info = database.query_flow(datapath_id=datapath_id, cookie_id=cookie_id)
-        self.assertIsInstance(flow_info, tuple)
-        self.assertEqual(len(flow_info), 2)
-        self.assertIsInstance(flow_info[0], dict)
-        self.assertIsInstance(flow_info[1], time.struct_time)
-        self.assertIn("OFPFlowMod", flow_info[0])
-        self.assertIn("cookie", flow_info[0]["OFPFlowMod"])
-        self.assertEqual(flow_info[0]["OFPFlowMod"]["cookie"], cookie_id)
-        self.assertLessEqual(flow_info[1], time.localtime())
-
-    def test_remove_flow(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        datapath_id = 1
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id = database.save_flow(datapath_id=datapath_id, flow_description=testing_flow.to_jsondict())
-        database.remove_flow(datapath_id=datapath_id, cookie_id=cookie_id)
-
-    def test_inexistent_flow(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        datapath_id = 1
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id = database.save_flow(datapath_id=datapath_id, flow_description=testing_flow.to_jsondict())
-        database.remove_flow(datapath_id=datapath_id, cookie_id=cookie_id)
-        with self.assertRaises(database.FlowNotRegistered):
-            database.remove_flow(datapath_id=datapath_id, cookie_id=cookie_id)
-
-    def test_unregistered_datapath(self):
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.query_flow(datapath_id=2, cookie_id=0)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.remove_flow(datapath_id=2, cookie_id=0)
-
-    def test_get_all_flows(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id_1 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        cookie_id_2 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        cookie_id_3 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        cookie_ids = database.query_flow_ids(datapath_id=1)
-        self.assertIsInstance(cookie_ids, tuple)
-        self.assertEqual(cookie_ids, (cookie_id_1, cookie_id_2, cookie_id_3))
-
 
 class DatabaseDatapathAndClientsOperations(unittest.TestCase):
     def setUp(self):
@@ -385,92 +234,4 @@ class DatabaseDatapathAndClientsOperations(unittest.TestCase):
             database.remove_client(client_id_1)
         with self.assertRaises(database.ClientNotRegistered):
             database.query_client_info(client_id_2)
-
-    def test_delete_all_associated_flows(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id_1 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        cookie_id_2 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        database.remove_datapath(datapath_id=1)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.remove_flow(datapath_id=1, cookie_id=cookie_id_1)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.query_flow(datapath_id=1, cookie_id=cookie_id_2)
-
-    def test_double_delete_inexistent_flow(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id_1 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        cookie_id_2 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        database.remove_datapath(datapath_id=1)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.remove_flow(datapath_id=1, cookie_id=cookie_id_1)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.remove_flow(datapath_id=1, cookie_id=cookie_id_2)
-
-    def test_double_query_info_inexistent_flow(self):
-        from ryu.ofproto.ofproto_v1_3_parser import OFPMatch, OFPActionOutput, OFPInstructionActions, OFPFlowMod
-        from ryu.ofproto.ofproto_v1_3 import \
-            OFPP_CONTROLLER, OFPCML_NO_BUFFER, OFPIT_APPLY_ACTIONS, OFPFC_ADD, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM, \
-            OFPFF_CHECK_OVERLAP
-
-        testing_flow = OFPFlowMod(
-            0,
-            0,  # Lets use this field to index a dictionary with every active flow in the Switch.
-            0, 0, OFPFC_ADD, 0, 0, 0, 0, OFPP_ANY, OFPG_ANY, OFPFF_SEND_FLOW_REM | OFPFF_CHECK_OVERLAP,
-            OFPMatch(
-                in_port=0,
-                eth_dst='ff:ff:ff:ff:ff:ff',
-                eth_type=0x0800,
-                ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=17, udp_src=68,
-                udp_dst=67
-            ),
-            [OFPInstructionActions(OFPIT_APPLY_ACTIONS,
-                                   [OFPActionOutput(port=OFPP_CONTROLLER, max_len=OFPCML_NO_BUFFER)])]
-        )
-
-        cookie_id_1 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        cookie_id_2 = database.save_flow(datapath_id=1, flow_description=testing_flow.to_jsondict())
-        database.remove_datapath(datapath_id=1)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.query_flow(datapath_id=1, cookie_id=cookie_id_1)
-        with self.assertRaises(database.DatapathNotRegistered):
-            database.query_flow(datapath_id=1, cookie_id=cookie_id_2)
-
 
