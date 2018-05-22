@@ -79,12 +79,12 @@ def parse_arguments():
         default="INFO",
         type=str
     )
-    parser.add_argument(
-        "-s", "--storage",
-        help="SQLite3 Database Location (default: %(default)s)",
-        default=':memory:',
-        type=validate_path
-    )
+    # parser.add_argument(
+    #     "-s", "--storage",
+    #     help="SQLite3 Database Location (default: %(default)s)",
+    #     default=':memory:',
+    #     type=validate_path
+    # )
     parser.add_argument(
         "-id", "--uuid",
         help="Controller UUID (default: %(default)s)",

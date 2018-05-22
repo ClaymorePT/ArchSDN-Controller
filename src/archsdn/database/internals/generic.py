@@ -1,17 +1,28 @@
 import logging
-import time
-import sqlite3
-from contextlib import closing
+from time import time, ctime, localtime
+
 from pathlib import Path
 from uuid import UUID, uuid4
+from copy import deepcopy
 
-from .shared_data import GetConnector, SetConnector
+from eventlet.semaphore import BoundedSemaphore
+
+from ...database import data
 
 _log = logging.getLogger(__name__)
 
 
+class FakeSemaphore():
+    def __init__(self):
+        pass
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 def initialise(location=":memory:", controller_id=None):
-    assert GetConnector() is None, "database already initialized"
     assert (isinstance(location, Path) and location.cwd().exists()) or\
            (isinstance(location, str) and location == ":memory:"), \
         "location is not a valid instance of Path nor str equal to ':memory:' -> {:s}".format(repr(location))
@@ -20,57 +31,44 @@ def initialise(location=":memory:", controller_id=None):
     if controller_id is None:
         controller_id = uuid4()
 
-    if location == ":memory:":
+    if isinstance(location, str) and location == ":memory:":
         _log.info("Initializing Database in Memory")
-    else:
-        location = str(location.absolute())
-        _log.info("Initializing Database in File at {:s}".format(location))
 
-    database_connector = sqlite3.connect(
-        location,
-        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
-        isolation_level='DEFERRED'
+        data.database_data = {
+            "configurations": {
+                "uuid": deepcopy(controller_id),
+                "creation_date": time()
+            },
+            "clients": {},
+            "datapaths": {},
+        }
+        data.database_semaphore = BoundedSemaphore()
+
+    elif isinstance(location, Path):
+        raise Exception("Only nemory database is supported.")
+        # if location.exists():
+        #     _log.info("Database exists! Using it and ignoring id present in config file")
+        #
+        # else:
+        #     _log.info("Initializing Database in File at {:s}".format(str(location)))
+
+    _log.info(
+        "database with UUID {:s} created in {:s}".format(
+            str(data.database_data["configurations"]["uuid"]),
+            str(ctime(data.database_data["configurations"]["creation_date"]))
+        )
     )
-    SetConnector(database_connector)
-    database_connector.enable_load_extension(True)
-
-    with closing(GetConnector().cursor()) as db_cursor:
-        db_cursor.execute("SELECT count(*) FROM sqlite_master "
-                          "WHERE type == 'table' AND name == 'configurations'")
-        res = db_cursor.fetchone()[0]
-        if res == 0:
-            if location == ":memory:":
-                _log.info("database does not exist in memory... creating!")
-            else:
-                _log.info("database does not exist... creating!")
-            with open(Path(str(Path(__file__).parents[1])+"/database.sql"), "r") as database_sql_fp:
-                sql_str = "".join(database_sql_fp.readlines())
-                database_connector.executescript(sql_str)
-                database_connector.execute("INSERT INTO configurations(uuid) VALUES (?);", (controller_id.bytes,))
-                database_connector.commit()
-        else:
-            _log.info("Database exists! Using it and ignoring id present in config file")
-            db_cursor.execute("SELECT uuid, creation_date FROM configurations")
-            (controller_uuid, creation_date) = db_cursor.fetchone()
-            _log.info("database with UUID {:s} created in {:s}".format(str(UUID(bytes=controller_uuid)), str(time.ctime(creation_date))))
 
 
 def infos():
-    assert GetConnector() is not None, "database not initialized"
-    assert not GetConnector().in_transaction, "database with active transaction"
+    with data.database_semaphore:
 
-    with closing(GetConnector().cursor()) as db_cursor:
-        res = db_cursor.execute("SELECT uuid, creation_date FROM configurations").fetchone()
         return {
-            "uuid": UUID(bytes=res[0]),
-            "creation_date": time.localtime(res[1])
+            "uuid": deepcopy(data.database_data["configurations"]["uuid"]),
+            "creation_date": localtime(data.database_data["configurations"]["creation_date"])
         }
 
 
 def close():
-    assert GetConnector(), "database not initialized"
+    _log.warning("Database is being closed...")
 
-    database_connector = GetConnector()
-    database_connector.commit()
-    database_connector.close()
-    SetConnector(None)

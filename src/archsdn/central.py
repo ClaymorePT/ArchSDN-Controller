@@ -85,6 +85,10 @@ def initialise(central_ip, central_port):
     _log.info("Initializing communication to central manager is complete.")
 
 
+def terminate():
+    __context.destroy()
+
+
 def __make_request(obj):
     global __socket
     assert __semaphore, "communication not initialised"
