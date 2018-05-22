@@ -12,6 +12,16 @@ from ...database import data
 _log = logging.getLogger(__name__)
 
 
+class FakeSemaphore():
+    def __init__(self):
+        pass
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
 def initialise(location=":memory:", controller_id=None):
     assert (isinstance(location, Path) and location.cwd().exists()) or\
            (isinstance(location, str) and location == ":memory:"), \

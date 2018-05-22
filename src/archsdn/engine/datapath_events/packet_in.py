@@ -602,10 +602,10 @@ def process_event(packet_in_event):
                                     )
 
                                     _log.info(
-                                        "Remote Scenario with ID {:s} is now active. Implemented in {:s}"
+                                        "Remote Scenario with ID {:s} is now active. Implemented in {:f} seconds"
                                         "".format(
                                             str(global_path_search_id),
-                                            time.ctime(time.time() - start_time)
+                                            time.time() - start_time
                                         )
                                     )
                                 else:

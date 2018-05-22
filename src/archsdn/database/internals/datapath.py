@@ -54,24 +54,25 @@ def register(datapath_id, ipv4_info=None, ipv6_info=None):
 
             for dp_id in data.database_data["datapaths"]:
                 datapath_data = data.database_data["datapaths"][dp_id]
-
-                if datapath_data["ipv4"] == ipv4_info[0] and datapath_data["ipv4_port"] == ipv4_info[1]:
-                    _log.debug(
-                        "Datapath 0x{:016X} is already registered with IPv4 info {:s}.".format(
-                            dp_id,
-                            str(ipv4_info)
+                if ipv4_info:
+                    if datapath_data["ipv4"] == ipv4_info[0] and datapath_data["ipv4_port"] == ipv4_info[1]:
+                        _log.debug(
+                            "Datapath 0x{:016X} is already registered with IPv4 info {:s}.".format(
+                                dp_id,
+                                str(ipv4_info)
+                            )
                         )
-                    )
-                    raise DatapathAlreadyRegistered()
+                        raise DatapathAlreadyRegistered()
 
-                if datapath_data["ipv6"] == ipv6_info[0] and datapath_data["ipv6_port"] == ipv6_info[1]:
-                    _log.debug(
-                        "Datapath 0x{:016X} is already registered with IPv6 info {:s}.".format(
-                            dp_id,
-                            str(ipv6_info)
+                if ipv6_info:
+                    if datapath_data["ipv6"] == ipv6_info[0] and datapath_data["ipv6_port"] == ipv6_info[1]:
+                        _log.debug(
+                            "Datapath 0x{:016X} is already registered with IPv6 info {:s}.".format(
+                                dp_id,
+                                str(ipv6_info)
+                            )
                         )
-                    )
-                    raise DatapathAlreadyRegistered()
+                        raise DatapathAlreadyRegistered()
 
             data.database_data["datapaths"][datapath_id] = {
                 "ipv4": None if ipv4_info is None else deepcopy(ipv4_info[0]),

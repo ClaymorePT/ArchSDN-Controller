@@ -1,6 +1,5 @@
 from time import time, localtime
 import logging
-from contextlib import closing
 from netaddr import EUI
 from ipaddress import IPv4Address, IPv6Address
 from copy import deepcopy

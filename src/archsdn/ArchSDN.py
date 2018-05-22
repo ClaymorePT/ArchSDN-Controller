@@ -47,6 +47,7 @@ default_configs = {
 
 def _quit_callback(signum, frame):
     logging.shutdown()
+    central.terminate()
     p2p_requests.shutdown_server()
     sys.exit()
 
@@ -146,6 +147,7 @@ class ArchSDN(RyuApp):
                     ipv4_info=ipv4_info,
                     ipv6_info=ipv6_info,
                 )
+                _log.debug("aaaaaaaaaaaaaaaaaa")
             except central.ControllerAlreadyRegistered:
                 _log.warning("This controller was already registered at the Central somewhere in the past.")
                 if default_configs["dbLocation"] == ":memory:":

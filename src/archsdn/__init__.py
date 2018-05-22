@@ -72,10 +72,10 @@ def start_controller():
         args.append('--archSDN_centralPort')
         args.append(str(parsed_args.cport))
 
-        if parsed_args.storage and parsed_args.storage != ':memory:':
-            args.append('--archSDN_dbLocation')
-            args.append(str(parsed_args.storage))
-
+        # if parsed_args.storage and parsed_args.storage != ':memory:':
+        #     args.append('--archSDN_dbLocation')
+        #     args.append(str(parsed_args.storage))
+        #
         args.append('--archSDN_logLevel')
         args.append(str(parsed_args.logLevel))
 
