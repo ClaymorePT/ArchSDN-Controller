@@ -86,6 +86,7 @@ def query_address_info(ipv4=None, ipv6=None):
                             "port": c_data["port_id"],
                             "registration_date": localtime(c_data["registration_date"]),
                         }
+                _log.debug("Address {:s} is not registered".format(str(ipv4)))
                 raise AddressNotRegistered()
             if ipv6:
                 for client_id in data.database_data["clients"]:
@@ -99,6 +100,7 @@ def query_address_info(ipv4=None, ipv6=None):
                             "port": c_data["port_id"],
                             "registration_date": localtime(c_data["registration_date"]),
                         }
+                _log.debug("Address {:s} is not registered".format(str(ipv6)))
                 raise AddressNotRegistered()
 
     except Exception as ex:

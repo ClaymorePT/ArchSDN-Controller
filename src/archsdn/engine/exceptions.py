@@ -80,7 +80,11 @@ class SwitchPortAlreadyConnected(LinkException):
 
 
 class PathNotFound(SectorException):
-    pass
+    def __init__(self, reason=None):
+        self.__reason = reason
+
+    def __str__(self):
+        return self.__reason if self.__reason else "Path Not found"
 
 
 class CannotCreateScenario(SectorException):

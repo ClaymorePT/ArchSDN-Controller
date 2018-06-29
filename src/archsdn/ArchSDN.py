@@ -30,7 +30,7 @@ sys.excepthook = (lambda tp, val, tb: custom_logging_callback(logging.getLogger(
 
 # Initialize logger for this module
 _log_format = '[{asctime:^s}][{levelname:^8s}][{name:s}|{funcName:s}|{lineno:d}]: {message:s}'
-_log_datefmt = '%Y/%m/%d|%H:%M:%S.%f (%Z)'
+_log_datefmt = '%Y/%m/%d|%H:%M:%S (%Z)'
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -147,7 +147,6 @@ class ArchSDN(RyuApp):
                     ipv4_info=ipv4_info,
                     ipv6_info=ipv6_info,
                 )
-                _log.debug("aaaaaaaaaaaaaaaaaa")
             except central.ControllerAlreadyRegistered:
                 _log.warning("This controller was already registered at the Central somewhere in the past.")
                 if default_configs["dbLocation"] == ":memory:":

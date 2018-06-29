@@ -2,8 +2,6 @@ import logging
 from archsdn.helpers import logger_module_name
 from threading import Lock
 
-import uuid
-
 _log = logging.getLogger(logger_module_name(__file__))
 
 # Table Flows Types
@@ -22,9 +20,11 @@ ARCHSDN_TABLES = {
 }
 
 # Flows priority values
+# TABLE 0 -> PORT_SEGREGATION_TABLE
 TABLE_0_DISCOVERY_PRIORITY = 2000
 TABLE_0_PORT_PRIORITY = 1000
 
+# TABLE 1 -> HOST_FILTERING_TABLE
 TABLE_1_LAYER_5_PRIORITY = 4000
 TABLE_1_LAYER_4_SPECIFIC_PRIORITY = 3500
 TABLE_1_LAYER_4_NETWORK_PRIORITY = 3250
@@ -34,14 +34,17 @@ TABLE_1_LAYER_3_GENERIC_PRIORITY = 2250
 TABLE_1_LAYER_3_DEFAULT_PRIORITY = 2000
 TABLE_1_VLAN_PRIORITY = 1000
 
+# TABLE 2 -> SECTOR_FILTERING_TABLE
 TABLE_2_MPLS_SWITCH_PRIORITY = 3000
 TABLE_2_MPLS_POP_PRIORITY = 2000
 TABLE_2_MPLS_CHANGE_PRIORITY = 1000
 
+# TABLE 3 -> MPLS_FILTERING_TABLE
 TABLE_3_MPLS_SWITCH_PRIORITY = 3000
 TABLE_3_MPLS_POP_PRIORITY = 2000
 TABLE_3_MPLS_CHANGE_PRIORITY = 1000
 
+# TABLE 4 -> FOREIGN_HOST_FILTERING_TABLE
 TABLE_4_LAYER_5_PRIORITY = 4000
 TABLE_4_LAYER_4_SPECIFIC_PRIORITY = 3500
 TABLE_4_LAYER_4_NETWORK_PRIORITY = 3250
@@ -106,15 +109,51 @@ def calculate_new_qvalue(old_value, forward_value, reward):
 # Active implementation  scenario tasks
 #  This dictionary keeps a record of the active tasks to implement scenarios which need multiple controllers
 #   coordination
-scenario_implementation_tasks = {
-    "IPv4": {
-        "ICMP": {},
-        "UDP": {},
-        "TCP": {},
-        "*": {},
-    },
-    "MPLS": {}
-}
+
+class ImplementationTaskExists(Exception):
+    pass
+
+
+class __Implementation_Task():
+    __scenario_implementation_tasks = {
+        "IPv4": {
+            "ICMP": set(),
+            "UDP": set(),
+            "TCP": set(),
+            "*": set(),
+        },
+        "MPLS": {
+            "*": set()
+        }
+    }
+
+    def __init__(self, taskID, first_layer, second_layer="*"):
+        self.__first_layer = None
+        self.__second_layer = None
+        self.__taskID = None
+
+        if first_layer not in __class__.__scenario_implementation_tasks:
+            raise AttributeError("first_layer argument is invalid.")
+
+        if second_layer not in __class__.__scenario_implementation_tasks[first_layer]:
+            raise AttributeError("second_layer argument is invalid.")
+
+        if taskID in __class__.__scenario_implementation_tasks[first_layer][second_layer]:
+            raise ImplementationTaskExists()
+
+        self.__first_layer = first_layer
+        self.__second_layer = second_layer
+        self.__taskID = taskID
+        __class__.__scenario_implementation_tasks[first_layer][second_layer].add(taskID)
+
+    def __del__(self):
+        if self.__taskID:
+            __class__.__scenario_implementation_tasks[self.__first_layer][self.__second_layer].remove(self.__taskID)
+
+
+def register_implementation_task(*args, **kwargs):
+    return __Implementation_Task(*args, **kwargs)
+
 
 
 #

@@ -805,7 +805,8 @@ def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
 def construct_unidirectional_path(
         origin_id,
         target_id,
-        allocated_bandwith = None
+        allocated_bandwith = None,
+        sector_a_hash_val=None,
 ):
     '''
         Constructs the scenario specified by :param scenario_type.
@@ -826,6 +827,20 @@ def construct_unidirectional_path(
 
             # Make a copy of the network graph
             net_cpy = __net.copy()
+
+            # If hash values are provided
+            if isinstance(query_entity(origin_id), Sector) and sector_a_hash_val is not None:
+                remove_links = []
+                for dst_id in net_cpy[origin_id]:
+                    for port_id in net_cpy[origin_id][dst_id]:
+                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != sector_a_hash_val:
+                            remove_links.append((dst_id, port_id))
+
+                for (dst_id, port_id) in remove_links:
+                    net_cpy.remove_edge(origin_id, dst_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
+                    net_cpy.remove_edge(dst_id, origin_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
@@ -959,7 +974,6 @@ def construct_bidirectional_path(
         target_id,
         allocated_bandwith=None,
         sector_a_hash_val=None,
-        sector_b_hash_val=None,
 ):
     '''
         Constructs the scenario specified by :param scenario_type.
@@ -972,6 +986,16 @@ def construct_bidirectional_path(
         :param sector_b_shash_val:
         :return:
     '''
+    # __log.debug(
+    #     "construct_bidirectional_path: "
+    #     "origin_id: {:s}, target_id: {:s}, allocated_bandwith: {:d}, sector_a_hash_val: {:s}".format(
+    #         str(origin_id),
+    #         str(target_id),
+    #         allocated_bandwith,
+    #         "{:x}".format(sector_a_hash_val) if sector_a_hash_val else "None"
+    #     )
+    # )
+
     try:
         with __lock:
             path = []  # Discovered Path
@@ -982,22 +1006,20 @@ def construct_bidirectional_path(
 
             # Make a copy of the network graph
             net_cpy = __net.copy()
-            #__log.debug("Network copy:\n  {:s}".format("\n  ".join(tuple((str(edge) for edge in net_cpy.edges(data=True))))))
 
-            # If hash values are provided,
-            for (src_id, hash_val) in ((origin_id, sector_a_hash_val), (target_id, sector_b_hash_val)):
-                if isinstance(query_entity(src_id), Switch) and hash_val is not None:
-                    remove_links = []
-                    for dst_id in net_cpy[src_id]:
-                        for port_id in net_cpy[src_id][dst_id]:
-                            if net_cpy[src_id][dst_id][port_id]['data']['hash_val'] != hash_val:
-                                remove_links.append((dst_id, port_id))
+            # If hash values are provided
+            if isinstance(query_entity(origin_id), Sector) and sector_a_hash_val is not None:
+                remove_links = []
+                for dst_id in net_cpy[origin_id]:
+                    for port_id in net_cpy[origin_id][dst_id]:
+                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != sector_a_hash_val:
+                            remove_links.append((dst_id, port_id))
 
-                    for (dst_id, port_id) in remove_links:
-                        net_cpy.remove_edge(src_id, dst_id, port_id)
-                        __log.debug("Removed edge {:s} from temporary topology.".format(str((src_id, dst_id, port_id))))
-                        net_cpy.remove_edge(dst_id, src_id, port_id)
-                        __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, src_id, port_id))))
+                for (dst_id, port_id) in remove_links:
+                    net_cpy.remove_edge(origin_id, dst_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
+                    net_cpy.remove_edge(dst_id, origin_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
@@ -1013,7 +1035,9 @@ def construct_bidirectional_path(
                                 net_cpy[node_a][node_b][port]['data']['available_speed']
                             )
                         )
-
+            # __log.debug(
+            #     "edges: {:s}".format(str(tuple(net_cpy.edges)))
+            # )
             shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
             assert len(shortest_path) >= 3, "shortest_path must have at least 3 nodes. It has {:d}".format(
                 len(shortest_path)

@@ -7,6 +7,7 @@ from archsdn.helpers import logger_module_name
 from archsdn.engine import globals
 from archsdn.engine import sector
 from archsdn.engine import entities
+from archsdn import database
 
 
 _log = logging.getLogger(logger_module_name(__file__))
@@ -62,6 +63,9 @@ def process_event(port_change_event):
     port_no = port_change_event.port_no
     reason_num = port_change_event.reason
     switch = sector.query_entity(datapath_id)
+    this_controller_id = database.get_database_info()['uuid']
+    ipv4_services = globals.mapped_services["IPv4"]
+    mpls_services = globals.mapped_services["MPLS"]
 
     if reason_num in ofp_port_reason:
         _log.info(
@@ -103,33 +107,55 @@ def process_event(port_change_event):
         elif reason_num == 1:
             if port_no in switch.ports:
                 if sector.is_port_connected(datapath_id, port_no):
-                    # Kill services in the sector which use this port
+
                     connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
                     services_to_kill = []
 
-                    ipv4_services = globals.mapped_services["IPv4"]
-                    mpls_services = globals.mapped_services["MPLS"]
-
-
+                    # Kill services in the sector which use this port
                     for service_type in ipv4_services:
-                        for service_tuple_id in ipv4_services[service_type]:
-                            if ipv4_services[service_type][service_tuple_id].uses_edge(
+                        for service_id in ipv4_services[service_type]:
+                            if ipv4_services[service_type][service_id].uses_edge(
                                     datapath_id, connected_entity_id, port_no
                             ):
-                                services_to_kill.append(("IPv4", service_type, service_tuple_id))
+                                services_to_kill.append(("IPv4", service_type, service_id))
 
                     for service_type in mpls_services:
-                        for service_tuple_id in mpls_services[service_type]:
-                            if mpls_services[service_type][service_tuple_id].uses_edge(
+                        for service_id in mpls_services[service_type]:
+                            if mpls_services[service_type][service_id].uses_edge(
                                     datapath_id, connected_entity_id, port_no
                             ):
-                                services_to_kill.append(("MPLS", service_type, service_tuple_id))
+                                services_to_kill.append(("MPLS", service_type, service_id))
 
-                    for (service_layer, service_type, service_tuple_id) in services_to_kill:
+                    for (service_layer, service_type, service_id) in services_to_kill:
+
+                        # Kill global services starting, ending or passing through this sector, which use this port
+                        for global_path_search_id in globals.active_remote_scenarios:
+                            (local_scenarios_ids_list, _) = globals.active_remote_scenarios[global_path_search_id]
+
+                            if service_id in local_scenarios_ids_list:
+                                if service_layer == "IPv4":
+                                    local_scenario = globals.mapped_services[service_layer][service_type][service_id]
+                                elif service_layer == "MPLS":
+                                    local_scenario = globals.mapped_services[service_layer][service_type][service_id]
+                                else:
+                                    raise Exception("Service layer unknown: {:s}".format(service_layer))
+
+                                last_entity = local_scenario.entity_b()
+                                if isinstance(last_entity, entities.Sector):
+                                    import p2p_requests
+
+                                    sector_proxy = p2p_requests.get_controller_proxy(last_entity.id)
+                                    sector_proxy.terminate_scenario(
+                                        {
+                                            "global_path_search_id": global_path_search_id,
+                                            "requesting_sector_id": str(this_controller_id)
+                                        }
+                                    )
+
                         if service_layer == "IPv4":
-                            del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                            del globals.mapped_services[service_layer][service_type][service_id]
                         elif service_layer == "MPLS":
-                            del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                            del globals.mapped_services[service_layer][service_type][service_id]
 
                     # Removes all flows registered in this switch, registered at table PORT_SEGREGATION_TABLE
                     #   and matching port_no.
@@ -182,24 +208,25 @@ def process_event(port_change_event):
                             # Kill services in the sector which use this port
                             connected_entity_id = sector.query_connected_entity_id(datapath_id, port_no)
                             services_to_kill = []
-                            for service_type in globals.mapped_services["IPv4"]:
-                                for service_tuple_id in globals.mapped_services["IPv4"][service_type]:
-                                    if globals.mapped_services["IPv4"][service_type][service_tuple_id].uses_edge(
+                            for service_type in ipv4_services:
+                                for service_id in ipv4_services[service_type]:
+                                    if ipv4_services[service_type][service_id].uses_edge(
                                             datapath_id, connected_entity_id, port_no
                                     ):
-                                        services_to_kill.append(("IPv4", service_type, service_tuple_id))
+                                        services_to_kill.append(("IPv4", service_type, service_id))
 
-                            for service_tuple_id in globals.mapped_services["MPLS"]:
-                                if globals.mapped_services["MPLS"][service_tuple_id].uses_edge(
-                                        datapath_id, connected_entity_id, port_no
-                                ):
-                                    services_to_kill.append(("MPLS", None, service_tuple_id))
+                            for service_type in mpls_services:
+                                for service_id in mpls_services[service_type]:
+                                    if mpls_services[service_type][service_id].uses_edge(
+                                            datapath_id, connected_entity_id, port_no
+                                    ):
+                                        services_to_kill.append(("MPLS", service_type, service_id))
 
-                            for (service_layer, service_type, service_tuple_id) in services_to_kill:
+                            for (service_layer, service_type, service_id) in services_to_kill:
                                 if service_layer == "IPv4":
-                                    del globals.mapped_services[service_layer][service_type][service_tuple_id]
+                                    del globals.mapped_services[service_layer][service_type][service_id]
                                 elif service_layer == "MPLS":
-                                    del globals.mapped_services[service_layer][service_tuple_id]
+                                    del globals.mapped_services[service_layer][service_id]
 
                             # Removes all flows at PORT_SEGREGATION_TABLE matching the removed port
                             datapath_obj.send_msg(

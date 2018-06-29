@@ -258,7 +258,7 @@ def __bidirectional_mpls_flow_activation(
 
         #
         # Sector B Side configuration
-        (unique_switch_id, switch_in_port, switch_out_port) = switches_info[0]
+        (unique_switch_id, switch_in_port, switch_out_port) = switches_info[-1]
 
         sector_b_side_switch_obj = globals.get_datapath_obj(unique_switch_id)
         sector_b_side_switch_ofp_parser = sector_b_side_switch_obj.ofproto_parser
@@ -366,17 +366,18 @@ def sector_to_sector_mpls_flow_activation(local_path, *args, **kwargs):
         mpls_service = __bidirectional_mpls_flow_activation(local_path, *args, **kwargs)
 
     else:
-        mapped_mpls_services = globals.mapped_services["MPLS"]["OneWay"]
-
-        if (sector_a_entity_obj.id, sector_b_entity_obj.id) in mapped_mpls_services:
-            raise Exception(
-                "MPLS service between Sector {:s} and Sector {:s} is already implemented.".format(
-                    str(sector_a_entity_obj.id), str(sector_b_entity_obj.id)
-                )
-            )
-
-        # Attempt to activate the service
-        mpls_service = __unidirectional_mpls_flow_activation(local_path, *args, **kwargs)
+        raise Exception("Not Implemented")
+        # mapped_mpls_services = globals.mapped_services["MPLS"]["OneWay"]
+        #
+        # if (sector_a_entity_obj.id, sector_b_entity_obj.id) in mapped_mpls_services:
+        #     raise Exception(
+        #         "MPLS service between Sector {:s} and Sector {:s} is already implemented.".format(
+        #             str(sector_a_entity_obj.id), str(sector_b_entity_obj.id)
+        #         )
+        #     )
+        #
+        # # Attempt to activate the service
+        # mpls_service = __unidirectional_mpls_flow_activation(local_path, *args, **kwargs)
 
     mapped_mpls_services[(sector_a_entity_obj.id, sector_b_entity_obj.id)] = mpls_service
 

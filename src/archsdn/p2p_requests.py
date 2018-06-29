@@ -23,27 +23,32 @@ import logging
 import pickle
 import time
 import blosc
+import struct
 
 from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address
-from threading import Thread
 
+import eventlet
 from eventlet.green import zmq
 from eventlet.semaphore import BoundedSemaphore
-
+from eventlet.green import socket
 from ryu.lib import hub
+#from eventlet.hubs import trampoline
+from ryu.controller import controller
+
+#from eventlet import hubs
+#hubs.use_hub('eventlet')
 
 from archsdn import central
 from archsdn import database
 from archsdn.helpers import logger_module_name, custom_logging_callback
 from archsdn.engine.exceptions import PathNotFound
+from archsdn.engine.entities import Sector
 
 
 _log = logging.getLogger(logger_module_name(__file__))
 
-_server_context = None
-_clients_context = zmq.Context()
-_server_socket = None
+_server_stream = None
 
 _tasks_under_execution = {}
 
@@ -65,64 +70,101 @@ class UnexpectedResponse(Exception):
 
 class __PeerProxy:
 
+    __counter = 0
+
     def __init__(self, location):
-        _log.info("Initializing communication to peer ({:s})".format(str(location)))
+        try:
+            self.__counter = __class__.__counter
+            __class__.__counter += 1
+            _log.info("Initializing communication to peer ({:s}: {:d})".format(str(location), self.__counter))
 
-        self.__location = "tcp://{:s}:{:d}".format(str(location[0]), location[1])
-        self.__semaphore = BoundedSemaphore()
-        self.__pool = zmq.Poller()
+            self.__location = (str(location[0]), location[1])
+            self.__stream_client = hub.StreamClient(self.__location)
+            self.__socket = self.__stream_client.connect()
+            self.__socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            self.__socket.settimeout(_socket_timeout)
+            self.__closed = False
 
-        self.__socket = _clients_context.socket(zmq.REQ)
-        self.__socket.connect(self.__location)
-        self.__pool.register(self.__socket)
-        self.__pool.register(self.__socket, zmq.POLLIN)
+        except Exception:
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+            raise
 
-        self.__source_peer_id = database.get_database_info()["uuid"]
+    def __del__(self):
+        _log.debug("Destroying proxy with id: {:d}".format(self.__counter))
+        self.__stream_client.stop()
+        if not self.__closed:
+            self.__socket.shutdown(socket.SHUT_RDWR)
+            self.__socket.close()
 
     def __getattr__(self, func_name):
         if func_name not in _requests:
             raise AttributeError("Proxy object has no attribute '{:s}'".format(func_name))
+        if self.__closed:
+            raise Exception("Socket Closed")
 
         def remote_method_call(*args, **kwargs):
-            with self.__semaphore:
-                try:
-                    retries_left = 3
-                    obj_byte_seq = blosc.compress(pickle.dumps((func_name, args, kwargs)))
-                    while retries_left:
-                        self.__socket.send(obj_byte_seq)
-                        events = dict(self.__pool.poll(_socket_timeout))
+            try:
+                _log.debug(
+                    "Peer Proxy ({:d}) connected to {:s}, requesting \"{:s}\" with args {:s}".format(
+                        self.__counter,
+                        str(self.__location),
+                        func_name,
+                        str((args, kwargs))
+                    )
+                )
+                encoded_request_bytes = blosc.compress(pickle.dumps((func_name, args, kwargs)))
+                self.__socket.sendall(
+                    struct.pack(
+                        "!H{:d}s".format(len(encoded_request_bytes)),
+                        len(encoded_request_bytes),
+                        encoded_request_bytes
+                    )
+                )
 
-                        if events and events[self.__socket] == zmq.POLLIN:
-                            answer = pickle.loads(blosc.decompress(self.__socket.recv()))
-                            if not isinstance(answer, tuple):
-                                raise UnexpectedResponse("Received wrong data type.")
-                            if answer[0]:
-                                raise UnexpectedResponse(answer[1])
-                            return answer[1]
+                # First, receive the length of the request
+                received_bytes = 0
+                buf = bytearray(2)
+                while received_bytes < 2:
+                    data_bytes = self.__socket.recv(2 - received_bytes, socket.MSG_WAITALL)
+                    if data_bytes:
+                        memoryview(buf)[received_bytes:received_bytes+len(data_bytes)] = data_bytes
+                        received_bytes += len(data_bytes)
+                    else:
+                        raise Exception("Socket Closed")
+                    # _log.debug("data_bytes: {:d}".format(len(data_bytes)))
+                msg_len = struct.unpack("!H", buf)[0]
 
-                        else:
-                            _log.warning(
-                                "No response from peer, retrying ({:d} out of {:d}) …".format(
-                                    _socket_retries - retries_left + 1,
-                                    _socket_retries
-                                )
-                            )
-                            self.__socket.setsockopt(zmq.LINGER, 0)
-                            self.__socket.close()
-                            self.__pool.unregister(self.__socket)
-                            retries_left -= 1
-                            if retries_left == 0:
-                                _log.error("Peer seems to be offline. Aborting.")
-                                raise ConnectionFailed()
-                            _log.warning("Reconnecting and resending...")
-                            # Create new connection
-                            self.__socket = _clients_context.socket(zmq.REQ)
-                            self.__socket.connect(self.__location)
-                            self.__pool.register(self.__socket, zmq.POLLIN)
+                # Then, receive the encoded request
+                received_bytes = 0
+                buf = bytearray(msg_len)
+                while received_bytes < msg_len:
+                    data_bytes = self.__socket.recv(msg_len - received_bytes, socket.MSG_WAITALL)
+                    if data_bytes:
+                        memoryview(buf)[received_bytes:received_bytes+len(data_bytes)] = data_bytes
+                        received_bytes += len(data_bytes)
+                    else:
+                        raise Exception("Socket Closed")
+                    # _log.debug("data_bytes: {:d}".format(len(data_bytes)))
+                answer = pickle.loads(blosc.decompress(buf))
 
-                except Exception:
-                    custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
-                    raise
+                if not isinstance(answer, tuple):
+                    raise UnexpectedResponse("Received wrong data type.")
+                if answer[0]:
+                    raise UnexpectedResponse(answer[1])
+
+                _log.debug(
+                    "Peer Proxy ({:d}) answer is \"{:s}\"".format(
+                        self.__counter,
+                        str(answer)
+                    )
+                )
+                return answer[1]
+
+            except Exception:
+                custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+                self.__socket.shutdown(socket.SHUT_RDWR)
+                self.__socket.close()
+                raise
         return remote_method_call
 
 
@@ -138,13 +180,11 @@ def get_controller_proxy(controller_id):
     else:
         raise AttributeError("Cannot aquire the controller {:s} network address.".format(str(controller_id)))
 
-    if controller_id not in _connection_objects:
-        _connection_objects[controller_id] = __PeerProxy(location)
-    return _connection_objects[controller_id]
+    return __PeerProxy(location)
 
 
 def initialize_server(ip, port):
-    global _server_context, _server_socket
+    global _server_stream
     assert isinstance(ip, (IPv4Address, IPv6Address)), \
         "ip is not a valid IPv4Address or IPv6Address object. Got instead {:s}".format(repr(ip))
     assert isinstance(port, int), \
@@ -152,37 +192,53 @@ def initialize_server(ip, port):
     assert 0 < port < 0xFFFF, \
         "port range invalid. Should be between 0 and 0xFFFF. Got {:d}".format(port)
 
-    # Prepare our context and sockets
-    _server_context = zmq.Context()
+    def client_handler(client_skt, client_addr):
+        client_skt.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        client_skt.settimeout(_socket_timeout)
 
-    # Socket to receive clients
-    _server_socket = _server_context.socket(zmq.ROUTER)
-    _server_socket.bind("tcp://{:s}:{:d}".format(str(ip), port))
+        try:
+            while True:
+                _log.warning("Serving {:s}".format(str(client_addr)))
+                # First, receive the length of the request
+                received_bytes = 0
+                buf = bytearray(2)
+                while received_bytes < 2:
+                    data_bytes = client_skt.recv(2-received_bytes, socket.MSG_WAITALL)
+                    if data_bytes:
+                        memoryview(buf)[received_bytes:received_bytes+len(data_bytes)] = data_bytes
+                        received_bytes += len(data_bytes)
+                    else:
+                        return
+                    # _log.debug("need_to_receive: {:d} data_bytes received: {:d};".format(2-received_bytes, len(data_bytes)))
+                msg_len = struct.unpack("!H", buf)[0]
 
-    # Socket to talk to workers
-    workers_socket = _server_context.socket(zmq.DEALER)
-    workers_socket.bind("inproc://workers")
+                # Then, receive the encoded request
+                received_bytes = 0
+                buf = bytearray(msg_len)
+                while received_bytes < msg_len:
+                    data_bytes = client_skt.recv(msg_len - received_bytes, socket.MSG_WAITALL)
+                    if data_bytes:
+                        memoryview(buf)[received_bytes:received_bytes+len(data_bytes)] = data_bytes
+                        received_bytes += len(data_bytes)
+                    else:
+                        return
+                    # _log.debug("data_bytes: {:d} - {}".format(len(data_bytes), data_bytes))
 
-    def recv_and_process(this_worker_id):
-        _log.warning("ZMQ context for worker {:d} is starting.".format(this_worker_id))
-
-        client_socket = _server_context.socket(zmq.REP)
-        client_socket.connect("inproc://workers")
-
-        while True:
-            try:
-                request = pickle.loads(blosc.decompress(client_socket.recv()))
-                _log.debug("Request received: {:s}".format(str(request)))
-                assert isinstance(request, tuple), "request type is not tuple"
-                assert len(request) == 3, "request length is not equal to 3"
-                assert isinstance(request[0], str), "request function name parameter is not string"
-                assert request[0] in _requests, "function name is not registered "
-
-                func_name = request[0]
-                args = request[1]
-                kwargs = request[2]
-
+                func_name = None
                 try:
+                    request = pickle.loads(blosc.decompress(buf))
+                    #_log.debug("1" * 100)
+                    #_log.debug("Request received: {:s}".format(str(request)))
+
+                    assert isinstance(request, tuple), "request type is not tuple"
+                    assert len(request) == 3, "request length is not equal to 3"
+                    assert isinstance(request[0], str), "request function name parameter is not string"
+                    assert request[0] in _requests, "function name is not registered "
+
+                    func_name = request[0]
+                    args = request[1]
+                    kwargs = request[2]
+
                     _log.info(
                         "Client is requesting {:s} with data {:s}.".format(
                             func_name,
@@ -201,31 +257,35 @@ def initialize_server(ip, port):
                     else:
                         answer = (1, "Internal Error. Cannot process request.")
 
-                client_socket.send(blosc.compress(pickle.dumps(answer)))
+                answer_data = blosc.compress(pickle.dumps(answer))
+                client_skt.sendall(
+                    struct.pack("!H{:d}s".format(len(answer_data)), len(answer_data), answer_data)
+                )
+                #_log.debug("2" * 100)
 
-            except zmq.ContextTerminated as ex:
-                _log.error(str(ex))
-                break
-
-            except zmq.ZMQerror as ex:
-                _log.error(str(ex))
-
-            except Exception as ex:
-                client_socket.send(pickle.dumps((1, str(ex))))
-                _log.error(str(ex))
-
-        _log.warning("ZMQ context is shutting down.")
-
-    for worker_id in range(0, 4):
-        hub.spawn(recv_and_process, worker_id)
-    t = Thread(target=zmq.proxy, args=(_server_socket, workers_socket))
-    t.start()
-    _log.warning("P2P Server initialized.")
+        except Exception:
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+    try:
+        _server_stream = hub.StreamServer((str(ip), port), client_handler)
+        hub.spawn(_server_stream.serve_forever)
+        _log.warning("P2P Server initialized.")
+    except OSError as ex:
+        if ex.errno == 98:
+            _log.error(
+                "Cannot initialize P2P server. Address {:s} with port {:d} is already being used.".format(
+                    str(ip),
+                    port
+                )
+            )
+        else:
+            _log.error(str(ex))
+        raise
 
 
 def shutdown_server():
-    _server_context.destroy()
-    _clients_context.destroy()
+    _server_stream.server.close()
+    #_clients_context.destroy()
+    pass
 
 
 def __req_local_time(*args, **kwargs):
@@ -261,42 +321,76 @@ def __activate_scenario(scenario_request):
     sector_requesting_service_id = UUID(scenario_request['sector_requesting_service'])
     scenario_mpls_label = scenario_request['mpls_label']
     scenario_hash_val = scenario_request['hash_val']
+#    _log.debug("scenario_hash_val: {:x}".format(scenario_hash_val))
 
-    source_ipv4 = global_path_search_id[1]
-    target_ipv4 = global_path_search_id[2]
+    source_controller_id = UUID(global_path_search_id[0])
+    source_ipv4_str = global_path_search_id[1]
+    target_ipv4_str = global_path_search_id[2]
     scenario_type = global_path_search_id[3]
-    target_host_info = central.query_address_info(ipv4=target_ipv4)
+    target_host_info = central.query_address_info(ipv4=target_ipv4_str)
 
     this_controller_id = database.get_database_info()['uuid']
 
+    # _log.debug(
+    #     "__activate_scenario\n"
+    #     "  global_path_search_id: {:s}\n"
+    #     "  sector_requesting_service_id: {:s}\n"
+    #     "  scenario_mpls_label: {:d}\n"
+    #     "  scenario_hash_val: {:x}\n"
+    #     "  source_controller_id: {:s}\n"
+    #     "  source_ipv4_str: {:s}\n"
+    #     "  target_ipv4_str: {:s}\n"
+    #     "  scenario_type: {:s}\n"
+    #     "  target_host_info: {:s}\n"
+    #     "  this_controller_id: {:s}\n".format(
+    #         str(global_path_search_id),
+    #         str(sector_requesting_service_id),
+    #         scenario_mpls_label,
+    #         scenario_hash_val,
+    #         str(source_controller_id),
+    #         str(source_ipv4_str),
+    #         str(target_ipv4_str),
+    #         scenario_type,
+    #         str(target_host_info),
+    #         str(this_controller_id)
+    #     )
+    # )
+
+    assert isinstance(this_controller_id, UUID), "this_controller_id expected to be UUID."
     assert isinstance(scenario_type, str), "scenario_type expected to be str"
-    try:
-        if scenario_type == 'ICMPv4':
-            active_icmp4_tasks = globals.scenario_implementation_tasks["IPv4"]["ICMP"]
+
+    if scenario_type == 'ICMPv4':
+        try:
+            if source_controller_id == this_controller_id:
+                error_str = "Path search has reached the source controller. Cancelling..."
+                _log.warning(error_str)
+                return {"success": False, "reason": error_str}
 
             if global_path_search_id in globals.active_remote_scenarios:
                 error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(str(global_path_search_id))
                 _log.warning(error_str)
                 return {"success": False, "reason": error_str}
 
-            if global_path_search_id in active_icmp4_tasks:
-                error_str = "ICMPv4 service task is already running for target host {:s}.".format(
-                    target_host_info.name
-                )
-                _log.warning(error_str)
-                return {"success": False, "reason": error_str}
-
-            else:
-                active_icmp4_tasks[global_path_search_id] = True
+            # Maintain an active token during the duration of this task. When the task is terminated, the token will
+            #   be removed.
+            active_task_token = globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP")
 
             if target_host_info.controller_id == this_controller_id:
                 # This IS the target sector
+
+                # Trying to activate the local path, to finish the global path.
                 bidirectional_path = sector.construct_bidirectional_path(
-                    sector_requesting_service_id,
-                    target_host_info.name,
-                    allocated_bandwith=100,
-                    sector_a_hash_val=scenario_hash_val
+                    sector_requesting_service_id,  # Sector from which the scenario request came
+                    target_host_info.name,  # Target Hostname which identifies the host entity in this sector.
+                    allocated_bandwith=100,  # Requested bandwidth for ICMP path
+                    sector_a_hash_val=scenario_hash_val  # hash value which identifies the switch that sends the traffic
                 )
+                # Implementation notes:
+                #  'sector_a_hash_val' is necessary for the sector controller. In the use-case where multiple switches
+                #   are connected to the same sector, the controller from that sector uses the 'sector_a_hash_val' to
+                #   distinguish between switches. The 'sector_a_hash_val' is sent in each discovery beacon, and stored
+                #   by the controller which receives them.
+
                 assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
 
                 # Allocate MPLS label for tunnel
@@ -306,35 +400,28 @@ def __activate_scenario(scenario_request):
                     local_mpls_label = None
 
                 local_service_scenario = services.icmpv4_flow_activation(
-                    bidirectional_path, local_mpls_label, scenario_mpls_label, source_ipv4=source_ipv4
+                    bidirectional_path, local_mpls_label, scenario_mpls_label, source_ipv4=source_ipv4_str
                 )
+                # If it reached here, then it means the path was successfully activated.
 
-                globals.active_sector_scenarios[id(local_service_scenario)] = local_service_scenario
                 globals.active_remote_scenarios[global_path_search_id] = (
                     (id(local_service_scenario),), (sector_requesting_service_id,)
                 )
 
-                if global_path_search_id in active_icmp4_tasks:
-                    del active_icmp4_tasks[global_path_search_id]
-                else:
-                    assert False, "global_path_search_id {:s} not in active_icmp4_tasks".format(
-                        str(global_path_search_id)
-                    )
-
-                kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4)
+                kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
                 if kspl:
                     if kspl > len(bidirectional_path):
-                        globals.set_known_shortest_path(this_controller_id, target_ipv4, len(bidirectional_path))
+                        globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(bidirectional_path))
                 else:
-                    globals.set_known_shortest_path(this_controller_id, target_ipv4, len(bidirectional_path))
-                kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4)
+                    globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(bidirectional_path))
+                kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
                 assert kspl, "kspl cannot be Zero or None."
 
                 reward = bidirectional_path.remaining_bandwidth_average/kspl*len(bidirectional_path)
 
-                old_q_value = globals.get_q_value(this_controller_id, target_ipv4)
+                old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
                 new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
-                globals.set_q_value(this_controller_id, target_ipv4, new_q_value)
+                globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
 
                 _log.debug(
                     "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
@@ -354,6 +441,7 @@ def __activate_scenario(scenario_request):
             else:
                 # This IS NOT the target sector
                 adjacent_sectors_ids = sector.query_sectors_ids()
+
                 adjacent_sectors_ids.remove(sector_requesting_service_id)
 
                 if len(adjacent_sectors_ids) == 0:
@@ -377,48 +465,44 @@ def __activate_scenario(scenario_request):
 
                     (switch_id, _, port_out) = bidirectional_path.path[-2]
                     selected_sector_proxy = get_controller_proxy(target_host_info.controller_id)
-                    service_activation_result = selected_sector_proxy.activate_scenario(
-                        {
-                            "global_path_search_id": global_path_search_id,
-                            "sector_requesting_service": str(this_controller_id),
-                            "mpls_label": local_mpls_label,
-                            "hash_val": globals.get_hash_val(switch_id, port_out),
-                        }
-                    )
+                    try:
+                        service_activation_result = selected_sector_proxy.activate_scenario(
+                            {
+                                "global_path_search_id": global_path_search_id,
+                                "sector_requesting_service": str(this_controller_id),
+                                "mpls_label": local_mpls_label,
+                                "hash_val": globals.get_hash_val(switch_id, port_out),
+                            }
+                        )
+                    except Exception as ex:
+                        service_activation_result = {"success": False, "reason": str(ex)}
 
-                    forward_q_value = service_activation_result["qvalue"]
+                    forward_q_value = 0 if "q_value" not in service_activation_result else service_activation_result[
+                        "q_value"]
                     if service_activation_result["success"]:
-                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4)
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
                         if kspl:
                             if kspl > len(bidirectional_path):
-                                globals.set_known_shortest_path(this_controller_id, target_ipv4,
+                                globals.set_known_shortest_path(this_controller_id, target_ipv4_str,
                                                                 len(bidirectional_path))
                         else:
-                            globals.set_known_shortest_path(this_controller_id, target_ipv4, len(bidirectional_path))
-                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4)
+                            globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(bidirectional_path))
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
                         assert kspl, "kspl cannot be Zero or None."
 
                         reward = bidirectional_path.remaining_bandwidth_average / kspl * len(bidirectional_path)
 
-                        old_q_value = globals.get_q_value(this_controller_id, target_ipv4)
+                        old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                        globals.set_q_value(this_controller_id, target_ipv4, new_q_value)
+                        globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
 
                         local_service_scenario = services.sector_to_sector_mpls_flow_activation(
                             bidirectional_path, local_mpls_label, scenario_mpls_label
                         )
 
-                        globals.active_sector_scenarios[id(local_service_scenario)] = local_service_scenario
                         globals.active_remote_scenarios[global_path_search_id] = (
                             (id(local_service_scenario),), (sector_requesting_service_id, target_host_info.controller_id)
                         )
-
-                        if global_path_search_id in active_icmp4_tasks:
-                            del active_icmp4_tasks[global_path_search_id]
-                        else:
-                            assert False, "global_path_search_id {:s} not in active_icmp4_tasks".format(
-                                str(global_path_search_id)
-                            )
 
                         _log.debug(
                             "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
@@ -435,22 +519,31 @@ def __activate_scenario(scenario_request):
                             "path_length": len(bidirectional_path) + service_activation_result["path_length"]
                         }
                     else:
-                        old_q_value = globals.get_q_value(this_controller_id, target_ipv4)
+                        old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                        globals.set_q_value(this_controller_id, target_ipv4, new_q_value)
+                        globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
 
                         _log.debug(
                             "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
                                 old_q_value, new_q_value, -1, forward_q_value
                             )
                         )
-                        _log.error("Failed to activate Scenario with ID {:s}. "
-                                   "No available sectors to explore.".format(str(global_path_search_id)))
+                        _log.error("Failed to activate Scenario with ID {:s} through sector {:s}. "
+                                   "Reason: {:s}.".format(
+                            str(target_host_info.controller_id),
+                            str(global_path_search_id),
+                            service_activation_result["reason"]
+                            ),
+                        )
 
-                        return {"success": False, "reason": "No available sectors to explore."}
+                        return {
+                            "success": False,
+                            "reason": "No available sectors to explore.",
+                        }
 
                 else:
                     while len(adjacent_sectors_ids):
+                        _log.debug("Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids))
                         for sector_id in adjacent_sectors_ids:
                             if sector_id not in globals.QValues:
                                 globals.QValues[sector_id] = {}
@@ -458,7 +551,7 @@ def __activate_scenario(scenario_request):
                         # Selecting a Sector based on the Q-Value
                         sectors_never_used = tuple(
                             filter(
-                                (lambda sec: target_ipv4 not in globals.QValues[sec]),
+                                (lambda sec: target_ipv4_str not in globals.QValues[sec]),
                                 adjacent_sectors_ids
                             )
                         )
@@ -468,9 +561,15 @@ def __activate_scenario(scenario_request):
                         else:
                             selected_sector_id = max(
                                 adjacent_sectors_ids,
-                                key=(lambda ent: globals.QValues[ent][target_ipv4])
+                                key=(lambda ent: globals.QValues[ent][target_ipv4_str])
                             )
                         adjacent_sectors_ids.remove(selected_sector_id)
+                        _log.debug(
+                            "{:s} sector selected".format(
+                                str(selected_sector_id),
+                                " from {}.".format(adjacent_sectors_ids) if len(adjacent_sectors_ids) else "."
+                            )
+                        )
                         ####################
 
                         # Acquire a bidirectional path
@@ -488,31 +587,34 @@ def __activate_scenario(scenario_request):
                             local_mpls_label = None
 
                         (switch_id, _, port_out) = bidirectional_path.path[-2]
-                        selected_sector_proxy = get_controller_proxy(selected_sector_id)
-                        service_activation_result = selected_sector_proxy.activate_scenario(
-                            {
-                                "global_path_search_id": global_path_search_id,
-                                "sector_requesting_service": str(this_controller_id),
-                                "mpls_label": local_mpls_label,
-                                "hash_val": globals.get_hash_val(switch_id, port_out),
-                            }
-                        )
+                        try:
+                            selected_sector_proxy = get_controller_proxy(selected_sector_id)
+                            service_activation_result = selected_sector_proxy.activate_scenario(
+                                {
+                                    "global_path_search_id": global_path_search_id,
+                                    "sector_requesting_service": str(this_controller_id),
+                                    "mpls_label": local_mpls_label,
+                                    "hash_val": globals.get_hash_val(switch_id, port_out),
+                                }
+                            )
+                        except Exception as ex:
+                            service_activation_result = {"success": False, "reason": str(ex)}
 
-                        forward_q_value = service_activation_result["qvalue"]
-                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4)
+                        forward_q_value = 0 if "q_value" not in service_activation_result else service_activation_result["q_value"]
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
                         if kspl:
                             if kspl > len(bidirectional_path):
-                                globals.set_known_shortest_path(this_controller_id, target_ipv4,
+                                globals.set_known_shortest_path(this_controller_id, target_ipv4_str,
                                                                 len(bidirectional_path))
                         else:
-                            globals.set_known_shortest_path(this_controller_id, target_ipv4, len(bidirectional_path))
-                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4)
+                            globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(bidirectional_path))
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
                         assert kspl, "kspl cannot be Zero or None."
 
                         if not service_activation_result["success"]:
-                            old_q_value = globals.get_q_value(this_controller_id, target_ipv4)
+                            old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
                             new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                            globals.set_q_value(this_controller_id, target_ipv4, new_q_value)
+                            globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
 
                             _log.debug(
                                 "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
@@ -521,17 +623,18 @@ def __activate_scenario(scenario_request):
                             )
 
                             _log.error(
-                                "Failed to activate Scenario with ID {:s}. Reason {:s}.".format(
+                                "Failed to activate Scenario with ID {:s} through Sector {:s}. Reason {:s}.".format(
                                     str(global_path_search_id),
+                                    str(selected_sector_id),
                                     service_activation_result["reason"]
                                 )
                             )
 
                         else:
                             reward = bidirectional_path.remaining_bandwidth_average / kspl * len(bidirectional_path)
-                            old_q_value = globals.get_q_value(this_controller_id, target_ipv4)
+                            old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
                             new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                            globals.set_q_value(this_controller_id, target_ipv4, new_q_value)
+                            globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
 
                             _log.debug(
                                 "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
@@ -539,21 +642,19 @@ def __activate_scenario(scenario_request):
                                 )
                             )
 
-                            local_service_scenario = services.icmpv4_flow_activation(
-                                bidirectional_path, local_mpls_label, scenario_mpls_label
-                            )
-
-                            globals.active_sector_scenarios[id(local_service_scenario)] = local_service_scenario
-                            globals.active_remote_scenarios[global_path_search_id] = (
-                                (id(local_service_scenario),), (sector_requesting_service_id, target_host_info.controller_id)
-                            )
-
-                            if global_path_search_id in active_icmp4_tasks:
-                                del active_icmp4_tasks[global_path_search_id]
-                            else:
-                                assert False, "global_path_search_id {:s} not in active_icmp4_tasks".format(
-                                    str(global_path_search_id)
+                            if isinstance(bidirectional_path.entity_a, Sector) and isinstance(bidirectional_path.entity_b, Sector):
+                                local_service_scenario = services.sector_to_sector_mpls_flow_activation(
+                                    bidirectional_path, local_mpls_label, scenario_mpls_label
                                 )
+                            else:
+                                local_service_scenario = services.icmpv4_flow_activation(
+                                    bidirectional_path, local_mpls_label, scenario_mpls_label
+                                )
+
+                            globals.active_remote_scenarios[global_path_search_id] = (
+                                (id(local_service_scenario),),
+                                (sector_requesting_service_id, target_host_info.controller_id)
+                            )
 
                             _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
                             return {
@@ -568,35 +669,106 @@ def __activate_scenario(scenario_request):
                                     str(global_path_search_id),
                                 )
                     _log.error(error_str)
-                    return {"success": False, "reason": error_str}
+                    return {
+                        "success": False,
+                        "reason": error_str,
+                    }
 
-        else:
-            error_str = "Failed to activate Scenario with ID {:s}. Invalid Scenario Type: {:s}".format(
-                            str(global_path_search_id),
-                            scenario_type
-                        )
-
+        except globals.ImplementationTaskExists:
+            error_str = "Global task with ID {:s} is already being executed".format(str(global_path_search_id))
             _log.error(error_str)
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
             return {"success": False, "reason": error_str}
 
-    except PathNotFound:
-        error_str = "Failed to implement path to sector {:s}. " \
-                    "An available path was not found in the network.".format(
-                        str(target_host_info.controller_id)
+        except PathNotFound:
+            error_str = "Failed to implement path to sector {:s}. " \
+                        "An available path was not found in the network.".format(
+                            str(target_host_info.controller_id)
+                        )
+            _log.error(error_str)
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+            return {"success": False, "reason": error_str}
+
+        except Exception as ex:
+            error_str = "Failed to implement path to host {:s} at sector {:s}. Reason {:s}.".format(
+                target_host_info.name,
+                str(target_host_info.controller_id),
+                str(type(ex))
+            )
+            _log.error(error_str)
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+            return {"success": False, "reason": error_str}
+
+    else:
+        error_str = "Failed to activate Scenario with ID {:s}. Invalid Scenario Type: {:s}".format(
+                        str(global_path_search_id),
+                        scenario_type
                     )
+
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
-        return {"success": False, "reason": error_str}
+        return {
+            "success": False,
+            "reason": error_str,
+        }
+
+
+def __terminate_scenario(scenario_request):
+    from archsdn.engine import globals
+
+    assert isinstance(scenario_request, dict), \
+        "scenario_request is expected to be of dict type. Got {:s}.".format(repr(scenario_request))
+    missing_args = tuple(
+        filter(
+            (lambda arg: arg not in scenario_request.keys()),
+            ('global_path_search_id', 'requesting_sector_id')
+        )
+    )
+
+    if missing_args:
+        raise TypeError("The following arguments are missing: {:s}".format(", ".join(missing_args)))
+
+    global_path_search_id = scenario_request["global_path_search_id"]
+
+    if global_path_search_id not in globals.active_remote_scenarios:
+        raise Exception("Path with ID {:s} registration does not exist.".format(str(global_path_search_id)))
+
+    try:
+        this_controller_id = database.get_database_info()['uuid']
+        (local_scenarios_ids_list, _) = globals.active_remote_scenarios[global_path_search_id]
+
+        for scenario_id in local_scenarios_ids_list:
+            local_scenario = globals.active_sector_scenarios[scenario_id]
+            last_entity = local_scenario.entity_b()
+
+            if isinstance(last_entity, Sector):
+                sector_proxy = get_controller_proxy(last_entity.id)
+                res = sector_proxy.terminate_scenario(
+                    {
+                        "global_path_search_id": global_path_search_id,
+                        "requesting_sector_id": str(this_controller_id)
+                    }
+                )
+                if not res["success"]:
+                    _log.warning(
+                        "Sector {:s} failed to destroy global scenario with ID {:s}. "
+                        "Removing local scenarios anyway...".format(
+                            str(last_entity.id),
+                            str(global_path_search_id)
+                        )
+                    )
+            del globals.active_sector_scenarios[scenario_id]
+        del globals.active_remote_scenarios[global_path_search_id]
+
+        return {"success": True, "global_path_search_id": global_path_search_id}
 
     except Exception as ex:
-        error_str = "Failed to implement path to host {:s} at sector {:s}. Reason {:s}.".format(
-            target_host_info.name,
-            str(target_host_info.controller_id),
+        error_str = "Failed to terminate scenario with ID {:s}. Reason {:s}.".format(
+            str(global_path_search_id),
             str(type(ex))
         )
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
-        return {"success": False, "reason": error_str}
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+        raise Exception(error_str)
 
 
 _requests = {
@@ -604,4 +776,5 @@ _requests = {
     "publish_event": __publish_event,
     "query_address_info": __query_address_info,
     "activate_scenario": __activate_scenario,
+    "terminate_scenario": __terminate_scenario
 }

@@ -547,11 +547,14 @@ def process_event(packet_in_event):
                 if target_host_not_found_in_sector:
                     # If the target host does not exist in the same sector, it is necessary to start a parallel
                     #  process which will implement the cross-sector ICMP service between the hosts.
-                    active_icmp4_tasks = globals.scenario_implementation_tasks["IPv4"]["ICMP"]
                     # Query host info details directly from foreign sector
 
-                    def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id):
+                    def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id, task_token):
+                        # Warning!!! task_token is not a useless argument. The task token exists only to signal
+                        #   the existence of a task execution. Once task_token goes out of context,
+                        #   the token is destroyed.
                         try:
+                            #_log.debug("1"*100)
                             start_time = time.time()
                             target_ipv4 = global_path_search_id[2]
                             target_host_info = central.query_address_info(ipv4=target_ipv4)
@@ -560,7 +563,7 @@ def process_event(packet_in_event):
                             adjacent_sectors_ids = sector.query_sectors_ids()
 
                             if len(adjacent_sectors_ids) == 0:
-                                raise Exception("No adjacent sectors available.")
+                                raise PathNotFound("No adjacent sectors available.")
 
                             if target_sector_id in adjacent_sectors_ids:
                                 # If the target sector IS adjacent to this sector, contact it directly and establish
@@ -619,13 +622,16 @@ def process_event(packet_in_event):
                                 # If the target sector IS NOT adjacent to this sector, lets select the best adjacent
                                 #   sector used in the past...
                                 while len(adjacent_sectors_ids):
+                                    _log.debug(
+                                        "Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids)
+                                    )
                                     for sector_id in adjacent_sectors_ids:
                                         if sector_id not in globals.QValues:
                                             globals.QValues[sector_id] = {}
 
                                     sectors_never_used = tuple(
                                         filter(
-                                            (lambda sec: str(target_host_info.ipv4) not in globals.QValues[sec]),
+                                            (lambda sec: str(target_ipv4) not in globals.QValues[sec]),
                                             adjacent_sectors_ids
                                         )
                                     )
@@ -635,10 +641,16 @@ def process_event(packet_in_event):
                                     else:
                                         selected_sector_id = max(
                                             adjacent_sectors_ids,
-                                            key=(lambda ent: globals.QValues[ent][str(target_host_info.ipv4)])
+                                            key=(lambda ent: globals.QValues[ent][str(target_ipv4)])
                                         )
                                     adjacent_sectors_ids.remove(selected_sector_id)
-
+                                    _log.debug(
+                                        "{:s} sector selected".format(
+                                            str(selected_sector_id),
+                                            " from {}.".format(adjacent_sectors_ids) if len(
+                                                adjacent_sectors_ids) else "."
+                                        )
+                                    )
                                     bidirectional_path = sector.construct_bidirectional_path(
                                         host_a_entity_id,
                                         selected_sector_id,
@@ -652,17 +664,23 @@ def process_event(packet_in_event):
                                     else:
                                         local_mpls_label = None
 
+                                    (switch_id, _, port_out) = bidirectional_path.path[-2]
                                     selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
-                                    service_activation_result = selected_sector_proxy.activate_scenario(
-                                        {
-                                            "global_path_search_id": global_path_search_id,
-                                            "sector_calling": str(controller_uuid),
-                                            "type": "ICMPv4",
-                                            "mpls_label": local_mpls_label
-                                        }
-                                    )
-                                    forward_q_value = service_activation_result["qvalue"]
+                                    try:
+                                        service_activation_result = selected_sector_proxy.activate_scenario(
+                                            {
+                                                "global_path_search_id": global_path_search_id,
+                                                "sector_requesting_service": str(controller_uuid),
+                                                "mpls_label": local_mpls_label,
+                                                "hash_val": globals.get_hash_val(switch_id, port_out),
 
+                                            }
+                                        )
+                                    except Exception as ex:
+                                        service_activation_result = {"success": False, "reason": str(ex)}
+
+                                    forward_q_value = 0 if "q_value" not in service_activation_result else \
+                                    service_activation_result["q_value"]
                                     kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
                                     if kspl:
                                         if kspl > len(bidirectional_path):
@@ -677,25 +695,23 @@ def process_event(packet_in_event):
                                             pkt_ipv4_dst,
                                             len(bidirectional_path)
                                         )
+                                    # Update kspl value since it may have been changed.
+                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
                                     assert kspl, "kspl cannot be Zero or None."
 
-                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
-
-                                    reward = bidirectional_path.remaining_bandwidth_average / kspl * \
-                                        len(bidirectional_path)
-
-                                    old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
-                                    new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                                    globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
-
-                                    _log.debug(
-                                        "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
-                                        "".format(
-                                            old_q_value, new_q_value, reward, forward_q_value
-                                        )
-                                    )
 
                                     if not service_activation_result["success"]:
+                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+
+                                        _log.debug(
+                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                            "".format(
+                                                old_q_value, new_q_value, -1, forward_q_value
+                                            )
+                                        )
+
                                         _log.error(
                                             "Failed to implement path to host {:s} at sector {:s}. Reason {:s}."
                                             "".format(
@@ -714,6 +730,20 @@ def process_event(packet_in_event):
                                             )
 
                                     else:
+                                        reward = bidirectional_path.remaining_bandwidth_average / kspl * \
+                                                 len(bidirectional_path)
+
+                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+
+                                        _log.debug(
+                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                            "".format(
+                                                old_q_value, new_q_value, reward, forward_q_value
+                                            )
+                                        )
+
                                         local_service_scenario = services.icmpv4_flow_activation(
                                             bidirectional_path,
                                             local_mpls_label,
@@ -721,7 +751,8 @@ def process_event(packet_in_event):
                                         )
 
                                         globals.active_sector_scenarios[
-                                            id(local_service_scenario)] = local_service_scenario
+                                            id(local_service_scenario)
+                                        ] = local_service_scenario
                                         globals.active_remote_scenarios[global_path_search_id] = (
                                             (id(local_service_scenario),), (selected_sector_id,)
                                         )
@@ -746,39 +777,40 @@ def process_event(packet_in_event):
                             _log.error("Failed to activate path. Reason {:s}.".format(str(ex)))
                             custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
 
-                        finally:
-                            if global_path_search_id in active_icmp4_tasks:
-                                del active_icmp4_tasks[global_path_search_id]
-                            else:
-                                assert False, "global_path_search_id {:s} not in active_icmp4_tasks".format(
-                                    str(global_path_search_id)
-                                )
                     #  End of Task Definition
 
-                    global_path_search_id = (
-                        str(controller_uuid),
-                        pkt_ipv4_src,
-                        pkt_ipv4_dst,
-                        "ICMPv4"
-                    )
 
-                    if global_path_search_id in globals.active_remote_scenarios:
-                        error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(
-                            str(global_path_search_id))
-                        _log.warning(error_str)
 
-                    elif global_path_search_id not in active_icmp4_tasks:
-                        active_icmp4_tasks[global_path_search_id] = hub.spawn(
-                            remote_host_icmpv4_task, datapath_id, pkt_in_port, global_path_search_id
+                    try:
+                        global_path_search_id = (
+                            str(controller_uuid),
+                            pkt_ipv4_src,
+                            pkt_ipv4_dst,
+                            "ICMPv4"
                         )
 
-                    else:
-                        _log.warning(
-                            "ICMPv4 service task is already running for the ipv4 source/target pair "
-                            "({:s}, {:s}).".format(
-                                str(pkt_ipv4_src), str(pkt_ipv4_dst)
+                        if global_path_search_id in globals.active_remote_scenarios:
+                            error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(
+                                str(global_path_search_id)
                             )
-                        )
+                            _log.warning(error_str)
+
+                        else:
+                            hub.spawn(
+                                remote_host_icmpv4_task,
+                                datapath_id,
+                                pkt_in_port,
+                                global_path_search_id,
+                                globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP")
+                            )
+
+                    except globals.ImplementationTaskExists:
+                            _log.warning(
+                                "ICMPv4 service task is already running for the ipv4 source/target pair "
+                                "({:s}, {:s}).".format(
+                                    str(pkt_ipv4_src), str(pkt_ipv4_dst)
+                                )
+                            )
 
             else:
                 # If the destination IP is in a different network, return ICMP Network Unreachable

@@ -42,7 +42,7 @@ def initialise(location=":memory:", controller_id=None):
             "clients": {},
             "datapaths": {},
         }
-        data.database_semaphore = BoundedSemaphore()
+        data.database_semaphore = FakeSemaphore()
 
     elif isinstance(location, Path):
         raise Exception("Only nemory database is supported.")
