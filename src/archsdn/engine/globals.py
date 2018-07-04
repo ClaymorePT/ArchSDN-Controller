@@ -191,10 +191,14 @@ def get_hash_val(switch_id, port_id):
 #  From Sector to Host (Cross-Sector, Egress)
 #  From Sector to Sector (Cross-Sector, Intermediary)
 #
-active_sector_scenarios = {}  # active_sector_scenarios[scenario id] = Scenario
 
-active_remote_scenarios = {}
-# active_remote_scenarios[global scenario id] = ((local scenarios ids, ), (sectors_ids who use, ))
+active_scenarios = {}
+# active_scenarios[global scenario id] = ((local scenarios ids, ), (adjacent sectors_ids which use this scenario, ))
+# global scenario id -> (origin_sector_id, source_ipv4_node, destination_ipv4_node, service_type)
+#
+# service_type -> ("ICMPv4", "MPLS")
+#
+
 
 
 #

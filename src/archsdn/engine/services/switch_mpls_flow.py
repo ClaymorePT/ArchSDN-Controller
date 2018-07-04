@@ -381,3 +381,5 @@ def sector_to_sector_mpls_flow_activation(local_path, *args, **kwargs):
 
     mapped_mpls_services[(sector_a_entity_obj.id, sector_b_entity_obj.id)] = mpls_service
 
+    return mpls_service
+

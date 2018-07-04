@@ -1178,3 +1178,5 @@ def icmpv4_flow_activation(bidirectional_path, *args, **kwargs):
 
     # Registering the established service
     mapped_icmpv4_services[(host_a_entity_obj.id, host_b_entity_obj.id)] = icmpv4_service
+
+    return icmpv4_service

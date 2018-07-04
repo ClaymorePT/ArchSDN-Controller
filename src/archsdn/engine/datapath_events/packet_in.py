@@ -517,7 +517,18 @@ def process_event(packet_in_event):
                         mpls_label = None
 
                     # Activating the ICMP service between hosts in the same sector.
-                    services.icmpv4_flow_activation(bidirectional_path, mpls_label)
+                    local_service_scenario = services.icmpv4_flow_activation(bidirectional_path, mpls_label)
+
+                    global_path_search_id = (
+                        str(controller_uuid),
+                        pkt_ipv4_src,
+                        pkt_ipv4_dst,
+                        "ICMPv4"
+                    )
+
+                    globals.active_scenarios[global_path_search_id] = (
+                        (id(local_service_scenario),), tuple()
+                    )
 
                     # Reinsert the ICMP packet into the OpenFlow Pipeline, in order to properly process it.
                     msg.datapath.send_msg(
@@ -599,8 +610,7 @@ def process_event(packet_in_event):
                                         target_ipv4
                                     )
 
-                                    globals.active_sector_scenarios[id(local_service_scenario)] = local_service_scenario
-                                    globals.active_remote_scenarios[global_path_search_id] = (
+                                    globals.active_scenarios[global_path_search_id] = (
                                         (id(local_service_scenario),), (target_sector_id,)
                                     )
 
@@ -750,10 +760,7 @@ def process_event(packet_in_event):
                                             target_ipv4
                                         )
 
-                                        globals.active_sector_scenarios[
-                                            id(local_service_scenario)
-                                        ] = local_service_scenario
-                                        globals.active_remote_scenarios[global_path_search_id] = (
+                                        globals.active_scenarios[global_path_search_id] = (
                                             (id(local_service_scenario),), (selected_sector_id,)
                                         )
 
@@ -789,7 +796,7 @@ def process_event(packet_in_event):
                             "ICMPv4"
                         )
 
-                        if global_path_search_id in globals.active_remote_scenarios:
+                        if global_path_search_id in globals.active_scenarios:
                             error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(
                                 str(global_path_search_id)
                             )

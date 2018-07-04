@@ -363,3 +363,5 @@ def ipv4_generic_flow_activation(unidirectional_path, mpls_label):
 
     # Registering the established service
     mapped_ipv4_services[(host_a_entity_obj.id, host_b_entity_obj.id)] = ipv4_service
+
+    return ipv4_service

@@ -22,6 +22,7 @@ _log = logging.getLogger(logger_module_name(__file__))
 
 
 def process_event(dp_event):
+    from archsdn import p2p_requests
     assert globals.default_configs, "engine not initialised"
 
     datapath_obj = dp_event.dp
@@ -151,50 +152,62 @@ def process_event(dp_event):
             "Trying to disconnect an unregistered Switch: {:016X}".format(datapath_id)
 
         # Kill services in the sector which use this Switch
-        ipv4_services = globals.mapped_services["IPv4"]
-        mpls_services = globals.mapped_services["MPLS"]
-        services_to_kill = []
+        local_scenarios_to_kill = []
 
-        for service_type in ipv4_services:
-            for service_id in ipv4_services[service_type]:
-                if ipv4_services[service_type][service_id].has_entity(datapath_id):
-                    services_to_kill.append(("IPv4", service_type, service_id))
+        for network_service in globals.mapped_services:
+            for service_type in globals.mapped_services[network_service]:
+                for entities_ids_pair in tuple(globals.mapped_services[network_service][service_type]):
+                    scenario = globals.mapped_services[network_service][service_type][entities_ids_pair]
 
-        for service_type in mpls_services:
-            for service_id in mpls_services[service_type]:
-                if mpls_services[service_type][service_id].has_entity(datapath_id):
-                    services_to_kill.append(("MPLS", service_type, service_id))
+                    if scenario.has_entity(datapath_id):
+                        local_scenarios_to_kill.append(scenario)
+                        del globals.mapped_services[network_service][service_type][entities_ids_pair]
 
-        for (service_layer, service_type, service_id) in services_to_kill:
+        _log.debug(
+            "Local Scenarios to be destroyed: {:s}".format(
+                str(tuple((str(i) for i in local_scenarios_to_kill)))
+            )
+        )
 
-            # Kill global services starting, ending or passing through this sector, which use this port
-            for global_path_search_id in globals.active_remote_scenarios:
-                (local_scenarios_ids_list, _) = globals.active_remote_scenarios[global_path_search_id]
+        global_scenarios_to_kill = []
+        for scenario in local_scenarios_to_kill:
+            for global_path_search_id in globals.active_scenarios:
+                (local_scenarios_ids_list, _) = globals.active_scenarios[global_path_search_id]
+                if id(scenario) in local_scenarios_ids_list:
+                    global_scenarios_to_kill.append(global_path_search_id)
 
-                if service_id in local_scenarios_ids_list:
-                    if service_layer == "IPv4":
-                        local_scenario = globals.mapped_services[service_layer][service_type][service_id]
-                    elif service_layer == "MPLS":
-                        local_scenario = globals.mapped_services[service_layer][service_type][service_id]
-                    else:
-                        raise Exception("Service layer unknown: {:s}".format(service_layer))
+        _log.debug(
+            "Global Scenarios to be destroyed: {:s}".format(
+                str(tuple((str(i) for i in global_scenarios_to_kill)))
+            )
+        )
 
-                    last_entity = local_scenario.entity_b()
-                    if isinstance(last_entity, entities.Sector):
-                        import p2p_requests
+        # Kill global services starting, ending or passing through this sector, which use this port
+        for global_path_search_id in global_scenarios_to_kill:
+            (_, adjacent_sectors_ids) = globals.active_scenarios[global_path_search_id]
 
-                        sector_proxy = p2p_requests.get_controller_proxy(last_entity.id)
-                        sector_proxy.terminate_scenario(
-                            {
-                                "global_path_search_id": global_path_search_id,
-                                "requesting_sector_id": str(this_controller_id)
-                            }
-                        )
+            for sector_id in adjacent_sectors_ids:
 
-            if service_layer == "IPv4":
-                del ipv4_services[service_type][service_id]
-            elif service_layer == "MPLS":
-                del mpls_services[service_type][service_id]
+                sector_proxy = p2p_requests.get_controller_proxy(sector_id)
+                _log.debug(
+                    "Contacting Sector {:s} to destroy path {:s}...".format(
+                        str(sector_id),
+                        str(global_path_search_id)
+                    )
+                )
+                res = sector_proxy.terminate_scenario(
+                    {
+                        "global_path_search_id": global_path_search_id,
+                        "requesting_sector_id": str(this_controller_id)
+                    }
+                )
+                _log.debug(
+                    "Sector {:s} answer is: {:s}".format(
+                        str(sector_id),
+                        str(res)
+                    )
+                )
+            del globals.active_scenarios[global_path_search_id]
 
         sector.remove_entity(datapath_id)
         database.remove_datapath(datapath_id)
