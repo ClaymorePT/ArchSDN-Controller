@@ -171,8 +171,8 @@ def process_event(dp_event):
 
         global_scenarios_to_kill = []
         for scenario in local_scenarios_to_kill:
-            for global_path_search_id in globals.active_scenarios:
-                (local_scenarios_ids_list, _) = globals.active_scenarios[global_path_search_id]
+            for global_path_search_id in globals.get_active_scenarios_keys():
+                (local_scenarios_ids_list, _) = globals.get_active_scenario(global_path_search_id)
                 if id(scenario) in local_scenarios_ids_list:
                     global_scenarios_to_kill.append(global_path_search_id)
 
@@ -184,7 +184,7 @@ def process_event(dp_event):
 
         # Kill global services starting, ending or passing through this sector, which use this port
         for global_path_search_id in global_scenarios_to_kill:
-            (_, adjacent_sectors_ids) = globals.active_scenarios[global_path_search_id]
+            (_, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
 
             for sector_id in adjacent_sectors_ids:
 
@@ -207,7 +207,6 @@ def process_event(dp_event):
                         str(res)
                     )
                 )
-            del globals.active_scenarios[global_path_search_id]
 
         sector.remove_entity(datapath_id)
         database.remove_datapath(datapath_id)

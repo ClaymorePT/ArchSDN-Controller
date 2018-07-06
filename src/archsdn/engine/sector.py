@@ -142,70 +142,91 @@ class __OneDirectionPath(SectorPath):
         # (node_a_id) --edge_port-- > (node_b_id)
         (node_a_id, node_b_id, edge_port) = edge
         path_len = len(self.__sector_path)
-        for i in range(1, path_len-1):
-            if i == 1:
-                entity_a_id = self.__sector_path[0]
-                (switch_id, in_port, out_port) = self.__sector_path[i]
-                (switch_id_after, in_port_id_after, _) = self.__sector_path[i + 1]
-                # (entity_a_id) ---in_port---> (switch_id)
-                if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
-                    return True
 
-                # (entity_a_id) <---in_port--- (switch_id)
-                if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
-                    return True
+        if path_len == 3:
+            entity_a_id = self.__sector_path[0]
+            (switch_id, in_port, out_port) = self.__sector_path[1]
+            entity_b_id = self.__sector_path[2]
+            # (entity_a_id) ---in_port---> (switch_id)
+            if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
+                return True
 
-                # (switch_id_current) ---out_port_current---> (switch_id_after)
-                if (switch_id == node_a_id) and (switch_id_after == node_b_id) and (out_port == edge_port):
-                    return True
+            # (entity_a_id) <---in_port--- (switch_id)
+            if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
+                return True
 
-                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
-                if (switch_id_after == node_a_id) and (switch_id == node_b_id) and (in_port_id_after == edge_port):
-                    return True
+            # (switch_id_current) ---out_port_current---> (entity_b_id)
+            if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
+                return True
 
-            elif i == path_len-2:
-                (switch_id_before, _, out_port_id_before) = self.__sector_path[i - 1]
-                (switch_id, in_port, out_port) = self.__sector_path[i]
-                entity_b_id = self.__sector_path[len(self.__sector_path)-1]
+            # (switch_id_current) <---in_port_id_after--- (entity_b_id)
+            if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (entity_b_id == edge_port):
+                return True
+        else:
+            for i in range(1, path_len-1):
+                if i == 1:
+                    entity_a_id = self.__sector_path[0]
+                    (switch_id, in_port, out_port) = self.__sector_path[i]
+                    (switch_id_after, in_port_id_after, _) = self.__sector_path[i + 1]
+                    # (entity_a_id) ---in_port---> (switch_id)
+                    if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
+                        return True
 
-                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
-                if (switch_id_before == node_a_id) and (switch_id == node_b_id) and (
-                        out_port_id_before == edge_port):
-                    return True
+                    # (entity_a_id) <---in_port--- (switch_id)
+                    if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
+                        return True
 
-                # (switch_id_before) <---in_port_current--- (switch_id_current)
-                if (switch_id == node_a_id) and (switch_id_before == node_b_id) and (
-                        in_port == edge_port):
-                    return True
+                    # (switch_id_current) ---out_port_current---> (switch_id_after)
+                    if (switch_id == node_a_id) and (switch_id_after == node_b_id) and (out_port == edge_port):
+                        return True
 
-                # (switch_id) ---out_port---> (entity_b_id)
-                if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (out_port == edge_port):
-                    return True
+                    # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                    if (switch_id_after == node_a_id) and (switch_id == node_b_id) and (in_port_id_after == edge_port):
+                        return True
 
-                # (entity_b_id) <---out_port--- (switch_id)
-                if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
-                    return True
+                elif i == path_len-2:
+                    (switch_id_before, _, out_port_id_before) = self.__sector_path[i - 1]
+                    (switch_id, in_port, out_port) = self.__sector_path[i]
+                    entity_b_id = self.__sector_path[len(self.__sector_path)-1]
 
-            else:
-                (switch_id_current, in_port_current, out_port_current) = self.__sector_path[i]
-                (switch_id_before, _, out_port_id_before) = self.__sector_path[i-1]
-                (switch_id_after, in_port_id_after, _) = self.__sector_path[i+1]
+                    # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                    if (switch_id_before == node_a_id) and (switch_id == node_b_id) and (
+                            out_port_id_before == edge_port):
+                        return True
 
-                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
-                if (switch_id_before == node_a_id) and (switch_id_current == node_b_id) and (out_port_id_before == edge_port):
-                    return True
+                    # (switch_id_before) <---in_port_current--- (switch_id_current)
+                    if (switch_id == node_a_id) and (switch_id_before == node_b_id) and (
+                            in_port == edge_port):
+                        return True
 
-                # (switch_id_before) <---in_port_current--- (switch_id_current)
-                if (switch_id_current == node_a_id) and (switch_id_before == node_b_id) and (in_port_current == edge_port):
-                    return True
+                    # (switch_id) ---out_port---> (entity_b_id)
+                    if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (out_port == edge_port):
+                        return True
 
-                # (switch_id_current) ---out_port_current---> (switch_id_after)
-                if (switch_id_current == node_a_id) and (switch_id_after == node_b_id) and (out_port_current == edge_port):
-                    return True
+                    # (entity_b_id) <---out_port--- (switch_id)
+                    if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
+                        return True
 
-                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
-                if (switch_id_after == node_a_id) and (switch_id_current == node_b_id) and (in_port_id_after == edge_port):
-                    return True
+                else:
+                    (switch_id_current, in_port_current, out_port_current) = self.__sector_path[i]
+                    (switch_id_before, _, out_port_id_before) = self.__sector_path[i-1]
+                    (switch_id_after, in_port_id_after, _) = self.__sector_path[i+1]
+
+                    # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                    if (switch_id_before == node_a_id) and (switch_id_current == node_b_id) and (out_port_id_before == edge_port):
+                        return True
+
+                    # (switch_id_before) <---in_port_current--- (switch_id_current)
+                    if (switch_id_current == node_a_id) and (switch_id_before == node_b_id) and (in_port_current == edge_port):
+                        return True
+
+                    # (switch_id_current) ---out_port_current---> (switch_id_after)
+                    if (switch_id_current == node_a_id) and (switch_id_after == node_b_id) and (out_port_current == edge_port):
+                        return True
+
+                    # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                    if (switch_id_after == node_a_id) and (switch_id_current == node_b_id) and (in_port_id_after == edge_port):
+                        return True
         return False
 
     def is_bidirectional(self):
@@ -263,71 +284,93 @@ class __BiDirectionPath(SectorPath):
         # (node_a_id) --edge_port-- > (node_b_id)
         (node_a_id, node_b_id, edge_port) = edge
         path_len = len(self.__sector_path)
-        for i in range(1, path_len-1):
-            if i == 1:
-                entity_a_id = self.__sector_path[0]
-                (switch_id, in_port, out_port) = self.__sector_path[i]
-                (switch_id_after, in_port_id_after, _) = self.__sector_path[i + 1]
-                # (entity_a_id) ---in_port---> (switch_id)
-                if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
-                    return True
 
-                # (entity_a_id) <---in_port--- (switch_id)
-                if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
-                    return True
+        if path_len == 3:
+            entity_a_id = self.__sector_path[0]
+            (switch_id, in_port, out_port) = self.__sector_path[1]
+            entity_b_id = self.__sector_path[2]
+            # (entity_a_id) ---in_port---> (switch_id)
+            if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
+                return True
 
-                # (switch_id_current) ---out_port_current---> (switch_id_after)
-                if (switch_id == node_a_id) and (switch_id_after == node_b_id) and (out_port == edge_port):
-                    return True
+            # (entity_a_id) <---in_port--- (switch_id)
+            if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
+                return True
 
-                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
-                if (switch_id_after == node_a_id) and (switch_id == node_b_id) and (in_port_id_after == edge_port):
-                    return True
+            # (switch_id_current) ---out_port_current---> (entity_b_id)
+            if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
+                return True
 
-            elif i == path_len-2:
-                (switch_id_before, _, out_port_id_before) = self.__sector_path[i - 1]
-                (switch_id, in_port, out_port) = self.__sector_path[i]
-                entity_b_id = self.__sector_path[len(self.__sector_path)-1]
+            # (switch_id_current) <---in_port_id_after--- (entity_b_id)
+            if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (entity_b_id == edge_port):
+                return True
 
-                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
-                if (switch_id_before == node_a_id) and (switch_id == node_b_id) and (
-                        out_port_id_before == edge_port):
-                    return True
+        else:
+            for i in range(1, path_len-1):
+                if i == 1:
+                    entity_a_id = self.__sector_path[0]
+                    (switch_id, in_port, out_port) = self.__sector_path[i]
+                    (switch_id_after, in_port_id_after, _) = self.__sector_path[i + 1]
+                    # (entity_a_id) ---in_port---> (switch_id)
+                    if (entity_a_id == node_a_id) and (switch_id == node_b_id) and (in_port == edge_port):
+                        return True
 
-                # (switch_id_before) <---in_port_current--- (switch_id_current)
-                if (switch_id == node_a_id) and (switch_id_before == node_b_id) and (
-                        in_port == edge_port):
-                    return True
+                    # (entity_a_id) <---in_port--- (switch_id)
+                    if (switch_id == node_a_id) and (entity_a_id == node_b_id) and (in_port == edge_port):
+                        return True
 
-                # (switch_id) ---out_port---> (entity_b_id)
-                if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (out_port == edge_port):
-                    return True
+                    # (switch_id_current) ---out_port_current---> (switch_id_after)
+                    if (switch_id == node_a_id) and (switch_id_after == node_b_id) and (out_port == edge_port):
+                        return True
 
-                # (entity_b_id) <---out_port--- (switch_id)
-                if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
-                    return True
+                    # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                    if (switch_id_after == node_a_id) and (switch_id == node_b_id) and (in_port_id_after == edge_port):
+                        return True
 
-            else:
-                (switch_id_current, in_port_current, out_port_current) = self.__sector_path[i]
-                (switch_id_before, _, out_port_id_before) = self.__sector_path[i-1]
-                (switch_id_after, in_port_id_after, _) = self.__sector_path[i+1]
+                elif i == path_len-2:
+                    (switch_id_before, _, out_port_id_before) = self.__sector_path[i - 1]
+                    (switch_id, in_port, out_port) = self.__sector_path[i]
+                    entity_b_id = self.__sector_path[len(self.__sector_path)-1]
 
-                # (switch_id_before) ---out_port_id_before---> (switch_id_current)
-                if (switch_id_before == node_a_id) and (switch_id_current == node_b_id) and (out_port_id_before == edge_port):
-                    return True
+                    # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                    if (switch_id_before == node_a_id) and (switch_id == node_b_id) and (
+                            out_port_id_before == edge_port):
+                        return True
 
-                # (switch_id_before) <---in_port_current--- (switch_id_current)
-                if (switch_id_current == node_a_id) and (switch_id_before == node_b_id) and (in_port_current == edge_port):
-                    return True
+                    # (switch_id_before) <---in_port_current--- (switch_id_current)
+                    if (switch_id == node_a_id) and (switch_id_before == node_b_id) and (
+                            in_port == edge_port):
+                        return True
 
-                # (switch_id_current) ---out_port_current---> (switch_id_after)
-                if (switch_id_current == node_a_id) and (switch_id_after == node_b_id) and (out_port_current == edge_port):
-                    return True
+                    # (switch_id) ---out_port---> (entity_b_id)
+                    if (entity_b_id == node_a_id) and (switch_id == node_b_id) and (out_port == edge_port):
+                        return True
 
-                # (switch_id_current) <---in_port_id_after--- (switch_id_after)
-                if (switch_id_after == node_a_id) and (switch_id_current == node_b_id) and (in_port_id_after == edge_port):
-                    return True
-        return False
+                    # (entity_b_id) <---out_port--- (switch_id)
+                    if (switch_id == node_a_id) and (entity_b_id == node_b_id) and (out_port == edge_port):
+                        return True
+
+                else:
+                    (switch_id_current, in_port_current, out_port_current) = self.__sector_path[i]
+                    (switch_id_before, _, out_port_id_before) = self.__sector_path[i-1]
+                    (switch_id_after, in_port_id_after, _) = self.__sector_path[i+1]
+
+                    # (switch_id_before) ---out_port_id_before---> (switch_id_current)
+                    if (switch_id_before == node_a_id) and (switch_id_current == node_b_id) and (out_port_id_before == edge_port):
+                        return True
+
+                    # (switch_id_before) <---in_port_current--- (switch_id_current)
+                    if (switch_id_current == node_a_id) and (switch_id_before == node_b_id) and (in_port_current == edge_port):
+                        return True
+
+                    # (switch_id_current) ---out_port_current---> (switch_id_after)
+                    if (switch_id_current == node_a_id) and (switch_id_after == node_b_id) and (out_port_current == edge_port):
+                        return True
+
+                    # (switch_id_current) <---in_port_id_after--- (switch_id_after)
+                    if (switch_id_after == node_a_id) and (switch_id_current == node_b_id) and (in_port_id_after == edge_port):
+                        return True
+            return False
 
     def is_bidirectional(self):
         return True

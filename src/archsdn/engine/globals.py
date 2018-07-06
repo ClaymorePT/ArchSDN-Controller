@@ -1,6 +1,7 @@
 import logging
 from archsdn.helpers import logger_module_name
 from threading import Lock
+from eventlet.semaphore import Semaphore
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -192,14 +193,41 @@ def get_hash_val(switch_id, port_id):
 #  From Sector to Sector (Cross-Sector, Intermediary)
 #
 
-active_scenarios = {}
+__active_scenarios = {}
+__active_scenarios_sem = Semaphore(value=1)
 # active_scenarios[global scenario id] = ((local scenarios ids, ), (adjacent sectors_ids which use this scenario, ))
 # global scenario id -> (origin_sector_id, source_ipv4_node, destination_ipv4_node, service_type)
 #
 # service_type -> ("ICMPv4", "MPLS")
 #
 
+def set_active_scenario(key, data):
+    with __active_scenarios_sem:
+        assert key not in __active_scenarios, "scenario already active"
 
+        __active_scenarios[key] = data
+
+def get_active_scenario(key, remove=False):
+    with __active_scenarios_sem:
+        assert key in __active_scenarios, "scenario not active"
+        temp = __active_scenarios[key]
+        if remove:
+            del __active_scenarios[key]
+        return temp
+
+def is_scenario_active(key):
+    with __active_scenarios_sem:
+        return key in __active_scenarios
+
+def delete_active_scenario(key):
+    with __active_scenarios_sem:
+        assert key in __active_scenarios, "scenario not active"
+
+        del __active_scenarios[key]
+
+def get_active_scenarios_keys():
+    with __active_scenarios_sem:
+        return tuple(__active_scenarios.keys())
 
 #
 # Differentiated Services Information

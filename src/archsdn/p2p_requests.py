@@ -227,7 +227,6 @@ def initialize_server(ip, port):
                 func_name = None
                 try:
                     request = pickle.loads(blosc.decompress(buf))
-                    _log.debug("1" * 100)
                     _log.debug("Request received: {:s}".format(str(request)))
 
                     assert isinstance(request, tuple), "request type is not tuple"
@@ -261,7 +260,6 @@ def initialize_server(ip, port):
                 client_skt.sendall(
                     struct.pack("!H{:d}s".format(len(answer_data)), len(answer_data), answer_data)
                 )
-                _log.debug("2" * 100)
 
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
@@ -366,7 +364,7 @@ def __activate_scenario(scenario_request):
                 _log.warning(error_str)
                 return {"success": False, "reason": error_str}
 
-            if global_path_search_id in globals.active_scenarios:
+            if globals.is_scenario_active(global_path_search_id):
                 error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(str(global_path_search_id))
                 _log.warning(error_str)
                 return {"success": False, "reason": error_str}
@@ -403,9 +401,9 @@ def __activate_scenario(scenario_request):
                     bidirectional_path, local_mpls_label, scenario_mpls_label, source_ipv4=source_ipv4_str
                 )
                 # If it reached here, then it means the path was successfully activated.
-
-                globals.active_scenarios[global_path_search_id] = (
-                    (id(local_service_scenario),), (sector_requesting_service_id,)
+                globals.set_active_scenario(
+                    global_path_search_id,
+                    ((id(local_service_scenario),), (sector_requesting_service_id,))
                 )
 
                 kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
@@ -500,8 +498,12 @@ def __activate_scenario(scenario_request):
                             bidirectional_path, local_mpls_label, scenario_mpls_label
                         )
 
-                        globals.active_scenarios[global_path_search_id] = (
-                            (id(local_service_scenario),), (sector_requesting_service_id, target_host_info.controller_id)
+                        globals.set_active_scenario(
+                            global_path_search_id,
+                            (
+                                (id(local_service_scenario),),
+                                (sector_requesting_service_id, target_host_info.controller_id)
+                            )
                         )
 
                         _log.debug(
@@ -651,9 +653,12 @@ def __activate_scenario(scenario_request):
                                     bidirectional_path, local_mpls_label, scenario_mpls_label
                                 )
 
-                            globals.active_scenarios[global_path_search_id] = (
-                                (id(local_service_scenario),),
-                                (sector_requesting_service_id, selected_sector_id)
+                            globals.set_active_scenario(
+                                global_path_search_id,
+                                (
+                                    (id(local_service_scenario),),
+                                    (sector_requesting_service_id, selected_sector_id)
+                                )
                             )
 
                             _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
@@ -729,13 +734,16 @@ def __terminate_scenario(scenario_request):
 
     global_path_search_id = scenario_request["global_path_search_id"]
 
-    if global_path_search_id not in globals.active_scenarios:
-        raise Exception("Path with ID {:s} registration does not exist.".format(str(global_path_search_id)))
+    if not globals.is_scenario_active(global_path_search_id):
+        return {
+            "success": False,
+            "reason": "Path with ID {:s} registration does not exist.".format(str(global_path_search_id))
+        }
 
     try:
         this_controller_id = database.get_database_info()['uuid']
         requesting_sector_id = UUID(scenario_request["requesting_sector_id"])
-        (local_scenarios_ids_list, adjacent_sectors_ids) = globals.active_scenarios[global_path_search_id]
+        (local_scenarios_ids_list, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
         local_scenarios_to_kill = []
 
         for network_service in globals.mapped_services:
@@ -773,7 +781,7 @@ def __terminate_scenario(scenario_request):
                     str(res)
                 )
             )
-        del globals.active_scenarios[global_path_search_id]
+
 
         return {"success": True, "global_path_search_id": global_path_search_id}
 

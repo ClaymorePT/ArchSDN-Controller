@@ -131,18 +131,16 @@ def process_event(port_change_event):
 
                     global_scenarios_to_kill = []
                     for scenario in local_scenarios_to_kill:
-                        for global_path_search_id in globals.active_scenarios:
-                            (local_scenarios_ids_list, _) = globals.active_scenarios[global_path_search_id]
+                        for global_path_search_id in globals.get_active_scenarios_keys():
+                            (local_scenarios_ids_list, _) = globals.get_active_scenario(global_path_search_id)
                             if id(scenario) in local_scenarios_ids_list:
                                 global_scenarios_to_kill.append(global_path_search_id)
 
                     # Kill global services starting, ending or passing through this sector, which use this port
                     for global_path_search_id in global_scenarios_to_kill:
-                        (_, adjacent_sectors_ids) = globals.active_scenarios[global_path_search_id]
+                        (_, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
 
                         for sector_id in adjacent_sectors_ids:
-                            import p2p_requests
-
                             sector_proxy = p2p_requests.get_controller_proxy(sector_id)
                             _log.debug(
                                 "Contacting Sector {:s} to destroy path {:s}...".format(
@@ -162,7 +160,6 @@ def process_event(port_change_event):
                                     str(res)
                                 )
                             )
-                        del globals.active_scenarios[global_path_search_id]
 
                     # Removes all flows at PORT_SEGREGATION_TABLE matching the removed port
                     datapath_obj.send_msg(
@@ -237,8 +234,8 @@ def process_event(port_change_event):
 
                             global_scenarios_to_kill = []
                             for scenario in local_scenarios_to_kill:
-                                for global_path_search_id in globals.active_scenarios:
-                                    (local_scenarios_ids_list, _) = globals.active_scenarios[global_path_search_id]
+                                for global_path_search_id in globals.get_active_scenarios_keys():
+                                    (local_scenarios_ids_list, _) = globals.get_active_scenario(global_path_search_id)
                                     if id(scenario) in local_scenarios_ids_list:
                                         global_scenarios_to_kill.append(global_path_search_id)
 
@@ -249,7 +246,7 @@ def process_event(port_change_event):
                             )
                             # Kill global services starting, ending or passing through this sector, which use this port
                             for global_path_search_id in global_scenarios_to_kill:
-                                (_, adjacent_sectors_ids) = globals.active_scenarios[global_path_search_id]
+                                (_, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
 
                                 for sector_id in adjacent_sectors_ids:
                                     sector_proxy = p2p_requests.get_controller_proxy(sector_id)
@@ -271,7 +268,6 @@ def process_event(port_change_event):
                                             str(res)
                                         )
                                     )
-                                del globals.active_scenarios[global_path_search_id]
 
                             # Removes all flows at PORT_SEGREGATION_TABLE matching the removed port
                             datapath_obj.send_msg(
@@ -292,8 +288,8 @@ def process_event(port_change_event):
                             sector.disconnect_entities(datapath_id, connected_entity_id, port_no)
 
                     elif entities.Switch.PORT_STATE.OFPPS_LIVE in new_state:  # Port link state is Live...
-                        # TODO: Do this.. maybe... This event could be used to try and reestablish previous scenarios
-                        # that were once lost.
+                        # TODO: Do this.. maybe... This event could be used to try and reestablish previous lost
+                        # scenarios.
                         pass
 
                     switch.ports[port_no]['state'] = new_state

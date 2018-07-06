@@ -332,6 +332,9 @@ def process_event(packet_in_event):
                             ipv4=host_ipv4,
                             ipv6=host_ipv6
                         )
+                        assert not sector.is_entity_registered(new_host), "Entity {:s} is already registered.".format(
+                            str(new_host)
+                        )
                         sector.register_entity(new_host)
                         sector.connect_entities(datapath_id, new_host.id, switch_port_no=pkt_in_port)
 
@@ -347,21 +350,21 @@ def process_event(packet_in_event):
                             sname=str(controller_uuid), yiaddr=str(client_info["ipv4"]), chaddr=bootp_layer.chaddr
                         ) \
                         / DHCP(
-                        options=[
-                            ("message-type", "offer"),
-                            ("server_id", str(ipv4_service)),
-                            ("lease_time", 43200),
-                            ("subnet_mask", str(ipv4_network.netmask)),
-                            ("router", str(ipv4_service)),
-                            ("hostname", "{:d}".format(host_database_id).encode("ascii")),
-                            ("name_server", str(ipv4_service)),
-                            # ("name_server", "8.8.8.8"),
-                            ("domain", "archsdn".encode("ascii")),
-                            ("renewal_time", 21600),
-                            ("rebinding_time", 37800),
-                            "end"
-                        ]
-                    )
+                            options=[
+                                ("message-type", "offer"),
+                                ("server_id", str(ipv4_service)),
+                                ("lease_time", 43200),
+                                ("subnet_mask", str(ipv4_network.netmask)),
+                                ("router", str(ipv4_service)),
+                                ("hostname", "{:d}".format(host_database_id).encode("ascii")),
+                                ("name_server", str(ipv4_service)),
+                                # ("name_server", "8.8.8.8"),
+                                ("domain", "archsdn".encode("ascii")),
+                                ("renewal_time", 21600),
+                                ("rebinding_time", 37800),
+                                "end"
+                            ]
+                        )
 
                     pad = Padding(load=" " * (300 - len(dhcp_offer)))
                     dhcp_offer = dhcp_offer / pad
@@ -526,8 +529,11 @@ def process_event(packet_in_event):
                         "ICMPv4"
                     )
 
-                    globals.active_scenarios[global_path_search_id] = (
-                        (id(local_service_scenario),), tuple()
+                    globals.set_active_scenario(
+                        global_path_search_id,
+                        (
+                            (id(local_service_scenario),), tuple()
+                        )
                     )
 
                     # Reinsert the ICMP packet into the OpenFlow Pipeline, in order to properly process it.
@@ -610,8 +616,11 @@ def process_event(packet_in_event):
                                         target_ipv4
                                     )
 
-                                    globals.active_scenarios[global_path_search_id] = (
-                                        (id(local_service_scenario),), (target_sector_id,)
+                                    globals.set_active_scenario(
+                                        global_path_search_id,
+                                        (
+                                            (id(local_service_scenario),), (target_sector_id,)
+                                        )
                                     )
 
                                     _log.info(
@@ -760,8 +769,11 @@ def process_event(packet_in_event):
                                             target_ipv4
                                         )
 
-                                        globals.active_scenarios[global_path_search_id] = (
-                                            (id(local_service_scenario),), (selected_sector_id,)
+                                        globals.set_active_scenario(
+                                            global_path_search_id,
+                                            (
+                                                (id(local_service_scenario),), (selected_sector_id,)
+                                            )
                                         )
 
                                         _log.info(
@@ -796,7 +808,7 @@ def process_event(packet_in_event):
                             "ICMPv4"
                         )
 
-                        if global_path_search_id in globals.active_scenarios:
+                        if globals.is_scenario_active(global_path_search_id):
                             error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(
                                 str(global_path_search_id)
                             )
