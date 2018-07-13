@@ -130,7 +130,6 @@ class __OneDirectionPath(SectorPath):
     def remaining_bandwidth_average(self):
         return self.__remaining_bandwidth_average
 
-
     def has_entity(self, entity_id):
         if self.__sector_path[0] == entity_id or self.__sector_path[-1] == entity_id:
             return True
@@ -848,18 +847,9 @@ def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
 def construct_unidirectional_path(
         origin_id,
         target_id,
-        allocated_bandwith = None,
+        allocated_bandwith=None,
         sector_a_hash_val=None,
 ):
-    '''
-        Constructs the scenario specified by :param scenario_type.
-
-        :param scenario_type:
-        :param origin_id:
-        :param target_id:
-        :param allocated_bandwith:
-        :return:
-    '''
     try:
         with __lock:
             path = []  # Discovered Path
@@ -928,6 +918,15 @@ def construct_unidirectional_path(
                     )
                     __net[head_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
                     __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                else:
+                    link_data = __net[head_id][switch_id][port_in]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed']) / link_data['max_speed']
+                    )
+                    link_data = __net[switch_id][tail_id][port_out]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed']) / link_data['max_speed']
+                    )
 
             else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
                 head_id = shortest_path[0]
@@ -947,29 +946,42 @@ def construct_unidirectional_path(
                     )
                     if before_ent_id == head_id:
                         edges.append((before_ent_id, switch_id, port_in))
+                        link_data = __net[before_ent_id][switch_id][port_in]['data']
                         if allocated_bandwith:
-                            link_data = __net[before_ent_id][switch_id][port_in]['data']
                             remaining_bandwidth_average.append(
                                 (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                             )
                             __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        else:
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed']) / link_data['max_speed']
+                            )
+
                     elif after_ent_id == tail_id:
                         edges.append((switch_id, after_ent_id, port_out))
+                        link_data = __net[switch_id][after_ent_id][port_out]['data']
                         if allocated_bandwith:
-                            link_data = __net[switch_id][after_ent_id][port_out]['data']
                             remaining_bandwidth_average.append(
                                 (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                             )
                             __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                        else:
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed']) / link_data['max_speed']
+                            )
 
                     path.append((switch_id, port_in, port_out))
                     edges.append((switch_id, after_ent_id, port_out))
+                    link_data = __net[switch_id][after_ent_id][port_out]['data']
                     if allocated_bandwith:
-                        link_data = __net[switch_id][after_ent_id][port_out]['data']
                         remaining_bandwidth_average.append(
                             (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                         )
                         __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                    else:
+                        remaining_bandwidth_average.append(
+                            (link_data['available_speed']) / link_data['max_speed']
+                        )
                 path.append(tail_id)
 
             def remove_scenario():
@@ -978,8 +990,8 @@ def construct_unidirectional_path(
                         for (from_ent, to_ent, network_port) in edges:
                             if __net.has_edge(from_ent, to_ent, network_port):
                                 __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
-
-            assert len(remaining_bandwidth_average), "remaining_bandwidth_average length is zero. This cannot be..."
+            if allocated_bandwith:
+                assert len(remaining_bandwidth_average), "remaining_bandwidth_average length is zero. This cannot be..."
 
             sector_path = __OneDirectionPath(
                 path,
@@ -1110,6 +1122,7 @@ def construct_bidirectional_path(
                     (switch_id, tail_id, port_out),
                     (tail_id, switch_id, port_out),
                 ]
+
                 if allocated_bandwith:
                     link_data = __net[switch_id][head_id][port_in]['data']
                     remaining_bandwidth_average.append(
@@ -1132,6 +1145,24 @@ def construct_bidirectional_path(
                     __net[switch_id][tail_id][port_out]['data']['available_speed'] -= allocated_bandwith
                     __net[tail_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
 
+                else:
+                    link_data = __net[switch_id][head_id][port_in]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed']) / link_data['max_speed']
+                    )
+                    link_data = __net[head_id][switch_id][port_in]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed']) / link_data['max_speed']
+                    )
+                    link_data = __net[switch_id][tail_id][port_out]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed']) / link_data['max_speed']
+                    )
+                    link_data = __net[tail_id][switch_id][port_out]['data']
+                    remaining_bandwidth_average.append(
+                        (link_data['available_speed']) / link_data['max_speed']
+                    )
+
             else:  # If the path has more than 3 elements (source, ...[middle switches]... , destiny)
                 head_id = shortest_path[0]
                 tail_id = shortest_path[-1]
@@ -1151,20 +1182,28 @@ def construct_bidirectional_path(
                     path.append((switch_id, port_in, port_out))
                     if before_ent_id == head_id:
                         edges.append((before_ent_id, switch_id, port_in))
+                        link_data = __net[before_ent_id][switch_id][port_in]['data']
                         if allocated_bandwith:
-                            link_data = __net[before_ent_id][switch_id][port_in]['data']
                             remaining_bandwidth_average.append(
                                 (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                             )
                             __net[before_ent_id][switch_id][port_in]['data']['available_speed'] -= allocated_bandwith
+                        else:
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed']) / link_data['max_speed']
+                            )
                     elif after_ent_id == tail_id:
                         edges.append((after_ent_id, switch_id, port_out))
+                        link_data = __net[after_ent_id][switch_id][port_out]['data']
                         if allocated_bandwith:
-                            link_data = __net[after_ent_id][switch_id][port_out]['data']
                             remaining_bandwidth_average.append(
                                 (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                             )
                             __net[after_ent_id][switch_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                        else:
+                            remaining_bandwidth_average.append(
+                                (link_data['available_speed']) / link_data['max_speed']
+                            )
 
                     edges.append((switch_id, before_ent_id, port_in))
                     edges.append((switch_id, after_ent_id, port_out))
@@ -1173,24 +1212,33 @@ def construct_bidirectional_path(
                         remaining_bandwidth_average.append(
                             (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                         )
-                        __net[switch_id][before_ent_id][port_in]['data']['available_speed'] -= allocated_bandwith
                         link_data = __net[switch_id][after_ent_id][port_out]['data']
                         remaining_bandwidth_average.append(
                             (link_data['available_speed'] - allocated_bandwith) / link_data['max_speed']
                         )
+                        __net[switch_id][before_ent_id][port_in]['data']['available_speed'] -= allocated_bandwith
                         __net[switch_id][after_ent_id][port_out]['data']['available_speed'] -= allocated_bandwith
+                    else:
+                        link_data = __net[switch_id][before_ent_id][port_in]['data']
+                        remaining_bandwidth_average.append(
+                            (link_data['available_speed']) / link_data['max_speed']
+                        )
+                        link_data = __net[switch_id][after_ent_id][port_out]['data']
+                        remaining_bandwidth_average.append(
+                            (link_data['available_speed']) / link_data['max_speed']
+                        )
 
                 path.append(tail_id)
 
             def remove_scenario(allocated_bandwith, edges):
                 with __lock:
-
                     if allocated_bandwith:
                         for (from_ent, to_ent, network_port) in edges:
                             if __net.has_edge(from_ent, to_ent, network_port):
                                 __net[from_ent][to_ent][network_port]['data']['available_speed'] += allocated_bandwith
 
-            assert len(remaining_bandwidth_average), "remaining_bandwidth_average length is zero. This cannot be..."
+            if allocated_bandwith:
+                assert len(remaining_bandwidth_average), "remaining_bandwidth_average length is zero. This cannot be..."
 
             sector_path = __BiDirectionPath(
                 path,

@@ -357,18 +357,18 @@ def __activate_scenario(scenario_request):
     assert isinstance(this_controller_id, UUID), "this_controller_id expected to be UUID."
     assert isinstance(scenario_type, str), "scenario_type expected to be str"
 
+    if source_controller_id == this_controller_id:
+        error_str = "Path search has reached the source controller. Cancelling..."
+        _log.warning(error_str)
+        return {"success": False, "reason": error_str}
+
+    if globals.is_scenario_active(global_path_search_id):
+        error_str = "Scenario with ID {:s} is already implemented.".format(str(global_path_search_id))
+        _log.warning(error_str)
+        return {"success": False, "reason": error_str}
+
     if scenario_type == 'ICMPv4':
         try:
-            if source_controller_id == this_controller_id:
-                error_str = "Path search has reached the source controller. Cancelling..."
-                _log.warning(error_str)
-                return {"success": False, "reason": error_str}
-
-            if globals.is_scenario_active(global_path_search_id):
-                error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(str(global_path_search_id))
-                _log.warning(error_str)
-                return {"success": False, "reason": error_str}
-
             # Maintain an active token during the duration of this task. When the task is terminated, the token will
             #   be removed.
             active_task_token = globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP")
@@ -704,6 +704,345 @@ def __activate_scenario(scenario_request):
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
             return {"success": False, "reason": error_str}
 
+    elif scenario_type == 'IPv4':
+        try:
+            # Maintain an active token during the duration of this task. When the task is terminated, the token will
+            #   be removed.
+            active_task_token = globals.register_implementation_task(global_path_search_id, "IPv4", "*")
+
+            if target_host_info.controller_id == this_controller_id:
+                # This IS the target sector
+
+                # Trying to activate the local path, to finish the global path.
+                unidirectional_path = sector.construct_unidirectional_path(
+                    sector_requesting_service_id,  # Sector from which the scenario request came
+                    target_host_info.name,  # Target Hostname which identifies the host entity in this sector.
+                    sector_a_hash_val=scenario_hash_val  # hash value which identifies the switch that sends the traffic
+                )
+                # Implementation notes:
+                #  'sector_a_hash_val' is necessary for the sector controller. In the use-case where multiple switches
+                #   are connected to the same sector, the controller from that sector uses the 'sector_a_hash_val' to
+                #   distinguish between switches. The 'sector_a_hash_val' is sent in each discovery beacon, and stored
+                #   by the controller which receives them.
+
+                assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
+
+                # Allocate MPLS label for tunnel
+                if len(unidirectional_path) >= 3:
+                    local_mpls_label = globals.alloc_mpls_label_id()
+                else:
+                    local_mpls_label = None
+
+                local_service_scenario = services.ipv4_generic_flow_activation(
+                    unidirectional_path, local_mpls_label, scenario_mpls_label, source_ipv4=source_ipv4_str
+                )
+                # If it reached here, then it means the path was successfully activated.
+                globals.set_active_scenario(
+                    global_path_search_id,
+                    ((id(local_service_scenario),), (sector_requesting_service_id,))
+                )
+
+                kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
+                if kspl:
+                    if kspl > len(unidirectional_path):
+                        globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(unidirectional_path))
+                else:
+                    globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(unidirectional_path))
+                kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
+                assert kspl, "kspl cannot be Zero or None."
+
+                reward = unidirectional_path.remaining_bandwidth_average/kspl*len(unidirectional_path)
+
+                old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
+                globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+
+                _log.debug(
+                    "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
+                        old_q_value, new_q_value, reward, 1
+                    )
+                )
+
+                _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+
+                return {
+                    "success": True,
+                    "global_path_search_id": global_path_search_id,
+                    "q_value": new_q_value,
+                    "path_length": len(unidirectional_path)
+                }
+
+            else:
+                # This IS NOT the target sector
+                adjacent_sectors_ids = sector.query_sectors_ids()
+
+                adjacent_sectors_ids.remove(sector_requesting_service_id)
+
+                if len(adjacent_sectors_ids) == 0:
+                    return {"success": False, "reason": "No available sectors to explore."}
+
+                if target_host_info.controller_id in adjacent_sectors_ids:
+                    # If the target sector IS adjacent to this sector, contact it directly and establish path
+                    unidirectional_path = sector.construct_unidirectional_path(
+                        sector_requesting_service_id,
+                        target_host_info.controller_id,
+                        sector_a_hash_val=scenario_hash_val
+                    )
+                    assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
+
+                    # Allocate MPLS label for tunnel
+                    if len(unidirectional_path) >= 3:
+                        local_mpls_label = globals.alloc_mpls_label_id()
+                    else:
+                        local_mpls_label = None
+
+                    (switch_id, _, port_out) = unidirectional_path.path[-2]
+                    selected_sector_proxy = get_controller_proxy(target_host_info.controller_id)
+                    try:
+                        service_activation_result = selected_sector_proxy.activate_scenario(
+                            {
+                                "global_path_search_id": global_path_search_id,
+                                "sector_requesting_service": str(this_controller_id),
+                                "mpls_label": local_mpls_label,
+                                "hash_val": globals.get_hash_val(switch_id, port_out),
+                            }
+                        )
+                    except Exception as ex:
+                        service_activation_result = {"success": False, "reason": str(ex)}
+
+                    forward_q_value = 0 if "q_value" not in service_activation_result else service_activation_result[
+                        "q_value"]
+                    if service_activation_result["success"]:
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
+                        if kspl:
+                            if kspl > len(unidirectional_path):
+                                globals.set_known_shortest_path(
+                                    this_controller_id, target_ipv4_str,
+                                    len(unidirectional_path)
+                                )
+                        else:
+                            globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(unidirectional_path))
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
+                        assert kspl, "kspl cannot be Zero or None."
+
+                        reward = unidirectional_path.remaining_bandwidth_average / kspl * len(unidirectional_path)
+
+                        old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                        globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+
+                        local_service_scenario = services.sector_to_sector_mpls_flow_activation(
+                            unidirectional_path, local_mpls_label, scenario_mpls_label
+                        )
+
+                        globals.set_active_scenario(
+                            global_path_search_id,
+                            (
+                                (id(local_service_scenario),),
+                                (sector_requesting_service_id, target_host_info.controller_id)
+                            )
+                        )
+
+                        _log.debug(
+                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
+                                old_q_value, new_q_value, reward, forward_q_value
+                            )
+                        )
+
+                        _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+
+                        return {
+                            "success": True,
+                            "global_path_search_id": global_path_search_id,
+                            "q_value": new_q_value,
+                            "path_length": len(unidirectional_path) + service_activation_result["path_length"]
+                        }
+                    else:
+                        old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                        globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+
+                        _log.debug(
+                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
+                                old_q_value, new_q_value, -1, forward_q_value
+                            )
+                        )
+                        _log.error("Failed to activate Scenario with ID {:s} through sector {:s}. "
+                                   "Reason: {:s}.".format(
+                            str(target_host_info.controller_id),
+                            str(global_path_search_id),
+                            service_activation_result["reason"]
+                            ),
+                        )
+
+                        return {
+                            "success": False,
+                            "reason": "No available sectors to explore.",
+                        }
+
+                else:
+                    while len(adjacent_sectors_ids):
+                        _log.debug("Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids))
+                        for sector_id in adjacent_sectors_ids:
+                            if sector_id not in globals.QValues:
+                                globals.QValues[sector_id] = {}
+
+                        # Selecting a Sector based on the Q-Value
+                        sectors_never_used = tuple(
+                            filter(
+                                (lambda sec: target_ipv4_str not in globals.QValues[sec]),
+                                adjacent_sectors_ids
+                            )
+                        )
+                        if len(sectors_never_used):
+                            selected_sector_id = sectors_never_used[0]
+
+                        else:
+                            selected_sector_id = max(
+                                adjacent_sectors_ids,
+                                key=(lambda ent: globals.QValues[ent][target_ipv4_str])
+                            )
+                        adjacent_sectors_ids.remove(selected_sector_id)
+                        _log.debug(
+                            "{:s} sector selected".format(
+                                str(selected_sector_id),
+                                " from {}.".format(adjacent_sectors_ids) if len(adjacent_sectors_ids) else "."
+                            )
+                        )
+                        ####################
+
+                        # Acquire a unidirectional path
+                        unidirectional_path = sector.construct_unidirectional_path(
+                            sector_requesting_service_id,
+                            selected_sector_id,
+                            allocated_bandwith=100
+                        )
+                        assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
+
+                        # Allocate MPLS label for local path
+                        if len(unidirectional_path) >= 3:
+                            local_mpls_label = globals.alloc_mpls_label_id()
+                        else:
+                            local_mpls_label = None
+
+                        (switch_id, _, port_out) = unidirectional_path.path[-2]
+                        try:
+                            selected_sector_proxy = get_controller_proxy(selected_sector_id)
+                            service_activation_result = selected_sector_proxy.activate_scenario(
+                                {
+                                    "global_path_search_id": global_path_search_id,
+                                    "sector_requesting_service": str(this_controller_id),
+                                    "mpls_label": local_mpls_label,
+                                    "hash_val": globals.get_hash_val(switch_id, port_out),
+                                }
+                            )
+                        except Exception as ex:
+                            service_activation_result = {"success": False, "reason": str(ex)}
+
+                        forward_q_value = 0 if "q_value" not in service_activation_result else service_activation_result["q_value"]
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
+                        if kspl:
+                            if kspl > len(unidirectional_path):
+                                globals.set_known_shortest_path(
+                                    this_controller_id, target_ipv4_str,
+                                    len(unidirectional_path)
+                                )
+                        else:
+                            globals.set_known_shortest_path(this_controller_id, target_ipv4_str, len(unidirectional_path))
+                        kspl = globals.get_known_shortest_path(this_controller_id, target_ipv4_str)
+                        assert kspl, "kspl cannot be Zero or None."
+
+                        if not service_activation_result["success"]:
+                            old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                            new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                            globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+
+                            _log.debug(
+                                "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
+                                    old_q_value, new_q_value, -1, forward_q_value
+                                )
+                            )
+
+                            _log.error(
+                                "Failed to activate Scenario with ID {:s} through Sector {:s}. Reason {:s}.".format(
+                                    str(global_path_search_id),
+                                    str(selected_sector_id),
+                                    service_activation_result["reason"]
+                                )
+                            )
+
+                        else:
+                            reward = unidirectional_path.remaining_bandwidth_average / kspl * len(unidirectional_path)
+                            old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                            new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                            globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+
+                            _log.debug(
+                                "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}.".format(
+                                    old_q_value, new_q_value, reward, forward_q_value
+                                )
+                            )
+
+                            if isinstance(unidirectional_path.entity_a, Sector) and isinstance(unidirectional_path.entity_b, Sector):
+                                local_service_scenario = services.sector_to_sector_mpls_flow_activation(
+                                    unidirectional_path, local_mpls_label, scenario_mpls_label
+                                )
+                            else:
+                                local_service_scenario = services.ipv4_generic_flow_activation(
+                                    unidirectional_path, local_mpls_label, scenario_mpls_label
+                                )
+
+                            globals.set_active_scenario(
+                                global_path_search_id,
+                                (
+                                    (id(local_service_scenario),),
+                                    (sector_requesting_service_id, selected_sector_id)
+                                )
+                            )
+
+                            _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+                            return {
+                                "success": True,
+                                "global_path_search_id": global_path_search_id,
+                                "q_value": new_q_value,
+                                "path_length": len(unidirectional_path) + service_activation_result["path_length"]
+                            }
+
+                    error_str = "Failed to activate Scenario with ID {:s}. " \
+                                "Alternative adjacent sectors options is exhausted.".format(
+                                    str(global_path_search_id),
+                                )
+                    _log.error(error_str)
+                    return {
+                        "success": False,
+                        "reason": error_str,
+                    }
+
+        except globals.ImplementationTaskExists:
+            error_str = "Global task with ID {:s} is already being executed".format(str(global_path_search_id))
+            _log.error(error_str)
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+            return {"success": False, "reason": error_str}
+
+        except PathNotFound:
+            error_str = "Failed to implement path to sector {:s}. " \
+                        "An available path was not found in the network.".format(
+                            str(target_host_info.controller_id)
+                        )
+            _log.error(error_str)
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+            return {"success": False, "reason": error_str}
+
+        except Exception as ex:
+            error_str = "Failed to implement path to host {:s} at sector {:s}. Reason {:s}.".format(
+                target_host_info.name,
+                str(target_host_info.controller_id),
+                str(type(ex))
+            )
+            _log.error(error_str)
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+            return {"success": False, "reason": error_str}
+
     else:
         error_str = "Failed to activate Scenario with ID {:s}. Invalid Scenario Type: {:s}".format(
                         str(global_path_search_id),
@@ -781,7 +1120,6 @@ def __terminate_scenario(scenario_request):
                     str(res)
                 )
             )
-
 
         return {"success": True, "global_path_search_id": global_path_search_id}
 

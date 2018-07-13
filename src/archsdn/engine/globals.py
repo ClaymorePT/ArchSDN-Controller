@@ -119,8 +119,8 @@ class __Implementation_Task():
     __scenario_implementation_tasks = {
         "IPv4": {
             "ICMP": set(),
-            "UDP": set(),
-            "TCP": set(),
+            # "UDP": set(), # TODO: Implement specific UDP scenario flows
+            # "TCP": set(), # TODO: Implement specific TCP scenario flows
             "*": set(),
         },
         "MPLS": {
@@ -255,8 +255,8 @@ def get_active_scenarios_keys():
 mapped_services = {
     "IPv4": {
         "ICMP": {},
-        "UDP": {},
-        "TCP": {},
+        # "UDP": set(), # TODO: Implement specific UDP scenario flows
+        # "TCP": set(), # TODO: Implement specific TCP scenario flows
         "*": {},
     },
     "MPLS": {

@@ -469,7 +469,7 @@ def process_event(packet_in_event):
                             reply_cls=datapath_ofp_parser.OFPBarrierReply
                         )
 
-        elif ip_layer.haslayer(ICMP):
+        elif ip_layer.haslayer(ICMP):  # ICMPv4 services
             datapath_obj = msg.datapath
             icmp_layer = pkt[ICMP]
             data_layer = pkt[Raw]
@@ -571,7 +571,6 @@ def process_event(packet_in_event):
                         #   the existence of a task execution. Once task_token goes out of context,
                         #   the token is destroyed.
                         try:
-                            #_log.debug("1"*100)
                             start_time = time.time()
                             target_ipv4 = global_path_search_id[2]
                             target_host_info = central.query_address_info(ipv4=target_ipv4)
@@ -855,7 +854,7 @@ def process_event(packet_in_event):
 
                 _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
 
-        elif ip_layer.haslayer(DNS):
+        elif ip_layer.haslayer(DNS):  # DNS service management
             datapath_obj = msg.datapath
             udp_layer = pkt[UDP]
             dns_layer = pkt[DNS]
@@ -913,25 +912,55 @@ def process_event(packet_in_event):
                     )
                 )
 
-        elif ip_layer.haslayer(IP):
+        elif ip_layer.haslayer(IP):  # Generic IPv4 service management
 
             if ip_layer.dst == str(ipv4_service):
-                return
+                # If the destination IP is the ipv4_service, return ICMP Port Unreachable.
+                # TODO: Implement a redirect flow and send all packets directed at the ipv4_service IP, to a local TAP
+                #   device serving all the necessary services.
+                icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
+                             / IP(src=str(ipv4_service), dst=ip_layer.src) \
+                             / ICMP(
+                    type="dest-unreach",
+                    code="port-unreachable",
+                    id=0,
+                    seq=0,
+                )
 
-            elif pkt_ipv4_dst in ipv4_network:  # If the destination IP belongs to the network.
-                # Opens a bi-directional tunnel to target, using the same path in both directions.
+                msg.datapath.send_msg(
+                    datapath_ofp_parser.OFPPacketOut(
+                        datapath=msg.datapath,
+                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
+                        in_port=datapath_ofp.OFPP_CONTROLLER,
+                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
+                        data=bytes(icmp_reply)
+                    )
+                )
+                _log.error("Service Ports are currently not reachable.")
+
+            elif pkt_ipv4_dst in ipv4_network:
+                # Opens a unidirectional tunnel to target, using the same path in both directions.
                 target_host_not_found_in_sector = False
+
+                global_path_search_id = (
+                    str(controller_uuid),
+                    pkt_ipv4_src,
+                    pkt_ipv4_dst,
+                    "IPv4"
+                )
+
                 try:
                     addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
                     target_switch_id = addr_info_dst["datapath"]
                     target_switch_port = addr_info_dst["port"]
                     host_a_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
                     host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
-                    host_a_entity = sector.query_entity(host_a_entity_id)
-                    host_b_entity = sector.query_entity(host_b_entity_id)
 
-                    # Construct a BiDirectional Path between Host A and Host B.
-                    unidirectional_path = sector.construct_unidirectional_path(host_a_entity_id, host_b_entity_id)
+                    # Construct a UniDirectional_path Path between Host A and Host B.
+                    unidirectional_path = sector.construct_unidirectional_path(
+                        host_a_entity_id,
+                        host_b_entity_id
+                    )
 
                     # Allocate MPLS label for tunnel
                     if len(unidirectional_path) >= 3:
@@ -939,28 +968,19 @@ def process_event(packet_in_event):
                     else:
                         mpls_label = None
 
-                    # Activating the IPv4 generic service between hosts in the same sector.
-                    services.ipv4_generic_flow_activation(unidirectional_path, mpls_label)
+                    # Activating the Generic IPv4 service between hosts in the same sector.
+                    local_service_scenario = services.ipv4_generic_flow_activation(unidirectional_path, mpls_label)
 
-                    # Reinsert the IPv4 packet into the OpenFlow Pipeline, in order to properly process it.
-                    msg.datapath.send_msg(
-                        datapath_ofp_parser.OFPPacketOut(
-                            datapath=msg.datapath,
-                            buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                            in_port=pkt_in_port,
-                            actions=[
-                                datapath_ofp_parser.OFPActionOutput(
-                                    port=datapath_ofp.OFPP_TABLE,
-                                    max_len=len(msg.data)
-                                ),
-                            ],
-                            data=msg.data
+                    globals.set_active_scenario(
+                        global_path_search_id,
+                        (
+                            (id(local_service_scenario),), tuple()
                         )
                     )
 
-                    _log.info(
-                        "IPv4 service tunnel for generic traffic, opened between hosts {:s} and {:s}.".format(
-                            host_a_entity.hostname, host_b_entity.hostname
+                    _log.warning(
+                        "IPv4 data flow opened from host {:s} to host {:s}.".format(
+                            str(host_a_entity_id), str(host_b_entity_id)
                         )
                     )
 
@@ -968,82 +988,265 @@ def process_event(packet_in_event):
                     target_host_not_found_in_sector = True
 
                 if target_host_not_found_in_sector:
+                    # If the target host does not exist in the same sector, it is necessary to start a parallel
+                    #  process which will implement the cross-sector Generic IPv4 data flow from host A to host B.
+                    # Query host info details directly from foreign sector
+
+                    def remote_host_generic_ipv4_task(dp_id, p_in_port, global_path_search_id, task_token):
+                        # Warning!!! task_token is not a useless argument. The task token exists only to signal
+                        #   the existence of a task execution. Once task_token goes out of context,
+                        #   the token is destroyed.
+                        try:
+                            start_time = time.time()
+                            target_ipv4 = global_path_search_id[2]
+                            target_host_info = central.query_address_info(ipv4=target_ipv4)
+                            host_a_entity_id = sector.query_connected_entity_id(dp_id, p_in_port)
+                            target_sector_id = target_host_info.controller_id
+                            adjacent_sectors_ids = sector.query_sectors_ids()
+
+                            if len(adjacent_sectors_ids) == 0:
+                                raise PathNotFound("No adjacent sectors available.")
+
+                            if target_sector_id in adjacent_sectors_ids:
+                                # If the target sector IS adjacent to this sector, contact it directly and establish
+                                #  a path
+                                unidirectional_path = sector.construct_unidirectional_path(
+                                    host_a_entity_id,
+                                    target_sector_id,
+                                )
+
+                                # Allocate MPLS label for tunnel
+                                if len(unidirectional_path) >= 3:
+                                    local_mpls_label = globals.alloc_mpls_label_id()
+                                else:
+                                    local_mpls_label = None
+
+                                # Knowing which switch connects to the sector and through which port
+                                (switch_id, _, port_out) = unidirectional_path.path[-2]
+                                selected_sector_proxy = p2p_requests.get_controller_proxy(target_sector_id)
+                                service_activation_result = selected_sector_proxy.activate_scenario(
+                                    {
+                                        "global_path_search_id": global_path_search_id,
+                                        "sector_requesting_service": str(controller_uuid),
+                                        "mpls_label": local_mpls_label,
+                                        "hash_val": globals.get_hash_val(switch_id, port_out),
+                                    }
+                                )
+
+                                if service_activation_result["success"]:
+                                    local_service_scenario = services.ipv4_generic_flow_activation(
+                                        unidirectional_path,
+                                        local_mpls_label,
+                                        target_ipv4
+                                    )
+
+                                    globals.set_active_scenario(
+                                        global_path_search_id,
+                                        (
+                                            (id(local_service_scenario),), (target_sector_id,)
+                                        )
+                                    )
+
+                                    _log.info(
+                                        "Remote Scenario with ID {:s} is now active. Implemented in {:f} seconds"
+                                        "".format(
+                                            str(global_path_search_id),
+                                            time.time() - start_time
+                                        )
+                                    )
+                                else:
+                                    _log.error(
+                                        "Cannot establish a generic IPv4 flow path to sector {:s}.".format(
+                                            str(target_sector_id)
+                                        )
+                                    )
+
+                            else:
+                                # If the target sector IS NOT adjacent to this sector, lets select the best adjacent
+                                #   sector used in the past...
+                                while len(adjacent_sectors_ids):
+                                    _log.debug(
+                                        "Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids)
+                                    )
+                                    for sector_id in adjacent_sectors_ids:
+                                        if sector_id not in globals.QValues:
+                                            globals.QValues[sector_id] = {}
+
+                                    sectors_never_used = tuple(
+                                        filter(
+                                            (lambda sec: str(target_ipv4) not in globals.QValues[sec]),
+                                            adjacent_sectors_ids
+                                        )
+                                    )
+                                    if len(sectors_never_used):
+                                        selected_sector_id = sectors_never_used[0]
+
+                                    else:
+                                        selected_sector_id = max(
+                                            adjacent_sectors_ids,
+                                            key=(lambda ent: globals.QValues[ent][str(target_ipv4)])
+                                        )
+                                    adjacent_sectors_ids.remove(selected_sector_id)
+                                    _log.debug(
+                                        "{:s} sector selected".format(
+                                            str(selected_sector_id),
+                                            " from {}.".format(adjacent_sectors_ids) if len(
+                                                adjacent_sectors_ids) else "."
+                                        )
+                                    )
+                                    unidirectional_path = sector.construct_unidirectional_path(
+                                        host_a_entity_id,
+                                        selected_sector_id,
+                                    )
+
+                                    assert len(unidirectional_path), "bidirectional_path path length cannot be zero."
+                                    # Allocate MPLS label for tunnel
+                                    if len(unidirectional_path) >= 3:
+                                        local_mpls_label = globals.alloc_mpls_label_id()
+                                    else:
+                                        local_mpls_label = None
+
+                                    (switch_id, _, port_out) = unidirectional_path.path[-2]
+                                    selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
+                                    try:
+                                        service_activation_result = selected_sector_proxy.activate_scenario(
+                                            {
+                                                "global_path_search_id": global_path_search_id,
+                                                "sector_requesting_service": str(controller_uuid),
+                                                "mpls_label": local_mpls_label,
+                                                "hash_val": globals.get_hash_val(switch_id, port_out),
+
+                                            }
+                                        )
+                                    except Exception as ex:
+                                        service_activation_result = {"success": False, "reason": str(ex)}
+
+                                    forward_q_value = 0 if "q_value" not in service_activation_result else \
+                                    service_activation_result["q_value"]
+                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
+                                    if kspl:
+                                        if kspl > len(unidirectional_path):
+                                            globals.set_known_shortest_path(
+                                                controller_uuid,
+                                                pkt_ipv4_dst,
+                                                len(unidirectional_path)
+                                            )
+                                    else:
+                                        globals.set_known_shortest_path(
+                                            controller_uuid,
+                                            pkt_ipv4_dst,
+                                            len(unidirectional_path)
+                                        )
+                                    # Update kspl value since it may have been changed.
+                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
+                                    assert kspl, "kspl cannot be Zero or None."
+
+
+                                    if not service_activation_result["success"]:
+                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+
+                                        _log.debug(
+                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                            "".format(
+                                                old_q_value, new_q_value, -1, forward_q_value
+                                            )
+                                        )
+
+                                        _log.error(
+                                            "Failed to implement path to host {:s} at sector {:s}. Reason {:s}."
+                                            "".format(
+                                                target_host_info.name,
+                                                str(target_host_info.controller_id),
+                                                service_activation_result["reason"]
+                                            )
+                                        )
+
+                                        if len(adjacent_sectors_ids) == 0:
+                                            _log.error(
+                                                "Adjacent sectors alternatives is exhausted. "
+                                                "Cannot establish IPv4 generic flow to sector {:s}".format(
+                                                    str(target_sector_id)
+                                                )
+                                            )
+
+                                    else:
+                                        reward = unidirectional_path.remaining_bandwidth_average / kspl * \
+                                                 len(unidirectional_path)
+
+                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+
+                                        _log.debug(
+                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                            "".format(
+                                                old_q_value, new_q_value, reward, forward_q_value
+                                            )
+                                        )
+
+                                        local_service_scenario = services.ipv4_generic_flow_activation(
+                                            unidirectional_path,
+                                            local_mpls_label,
+                                            target_ipv4
+                                        )
+
+                                        globals.set_active_scenario(
+                                            global_path_search_id,
+                                            (
+                                                (id(local_service_scenario),), (selected_sector_id,)
+                                            )
+                                        )
+
+                                        _log.info(
+                                            "Remote Scenario with ID {:s} is now active. Implemented in {:s}"
+                                            "".format(
+                                                str(global_path_search_id),
+                                                time.ctime(time.time() - start_time)
+                                            )
+                                        )
+                        except central.NoResultsAvailable:
+                            _log.error(
+                                "Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
+                            custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+                        except PathNotFound:
+                            _log.error("Failed to activate path. An available path was not found in the network.")
+                            custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+                        except Exception as ex:
+                            _log.error("Failed to activate path. Reason {:s}.".format(str(ex)))
+                            custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+                    #  End of Task Definition
+
                     try:
-                        # If the target host does not exist in the same sector, it is necessary to start a parallel
-                        #  process which will implement the cross-sector ICMP service between the hosts.
+                        if globals.is_scenario_active(global_path_search_id):
+                            error_str = "IPv4 generic flow scenario with ID {:s} is already implemented.".format(
+                                str(global_path_search_id)
+                            )
+                            _log.warning(error_str)
 
-                        addr_info = central.query_address_info(ipv4=pkt_ipv4_dst)
-                        raise AssertionError(
-                            "Support for hosts in other sectors, is Not implemented {}.".format(str(addr_info))
-                        )
+                        else:
+                            hub.spawn(
+                                remote_host_generic_ipv4_task,
+                                datapath_id,
+                                pkt_in_port,
+                                global_path_search_id,
+                                globals.register_implementation_task(global_path_search_id, "IPv4", "*")
+                            )
 
-                    except central.NoResultsAvailable:
-                        _log.error("Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
+                    except globals.ImplementationTaskExists:
+                            _log.warning(
+                                "IPv4 generic service task is already running for the ipv4 source/target pair "
+                                "({:s}, {:s}).".format(
+                                    str(pkt_ipv4_src), str(pkt_ipv4_dst)
+                                )
+                            )
 
             else:
                 _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
-
-
-
-        # elif ip_layer.haslayer(TCP):
-        #     # If the packet is not DHCP, ARP, DNS or ICMP, then it is probably a regular data packet.
-        #     # Lets create two uni-directional tunnels for TCP and UDP traffic, where the implemented QoS metrics will
-        #     #   depend upon the service characteristics.
-        #     #
-        #
-        #     if pkt_ipv4_dst not in ipv4_network:  # If the destination IP belongs to other networks...
-        #         _log.warning("Traffic towards destination {:s} is not supported.".format(str(pkt_ipv4_dst)))
-        #         return
-        #     if pkt_ipv4_dst == ipv4_network.broadcast_address:
-        #         _log.warning("Broadcast traffic ({:s}) is not supported.".format(str(pkt_ipv4_dst)))
-        #         return
-        #     if pkt_ipv4_dst.is_multicast:
-        #         _log.warning("Multicast traffic ({:s}) is not supported.".format(str(pkt_ipv4_dst)))
-        #         return
-        #
-        #     udp_layer = None
-        #     tcp_layer = None
-        #     src_port = None
-        #     dst_port = None
-        #     if ip_layer.haslayer(UDP):
-        #         udp_layer = pkt[UDP]
-        #         src_port = udp_layer.sport
-        #         dst_port = udp_layer.dport
-        #     elif ip_layer.haslayer(TCP):
-        #         tcp_layer = pkt[TCP]
-        #         src_port = tcp_layer.sport
-        #         dst_port = tcp_layer.dport
-        #     else:
-        #         raise AssertionError(
-        #             "Something is wrong. IP Packet is supposed to be UDP or TCP, but scapy seems to be confused."
-        #         )
-        #
-        #
-        #     from archsdn.engine.services.switch_ipv4_generic_flow import ipv4_generic_flow_activation
-        #
-        #     # Activating the IPv4 generic service between hosts in the same sector.
-        #     ipv4_generic_flow_activation(host_a_entity_id, host_b_entity_id)
-        #
-        #
-        #     # Reinsert the IPv4 packet into the OpenFlow Pipeline, in order to properly process it.
-        #     msg.datapath.send_msg(
-        #         ofp_parser.OFPPacketOut(
-        #             datapath=msg.datapath,
-        #             buffer_id=ofp.OFP_NO_BUFFER,
-        #             in_port=pkt_in_port,
-        #             actions=[
-        #                 ofp_parser.OFPActionOutput(port=ofp.OFPP_TABLE, max_len=len(msg.data)),
-        #             ],
-        #             data=msg.data
-        #         )
-        #     )
-        #
-        #     _log.warning(
-        #         "IPv4 tunnel for TCP and UDP traffic, opened between hosts {:s} and {:s}.".format(
-        #             host_a_entity.hostname, host_b_entity.hostname
-        #         )
-        #     )
-
 
         else:
             _log.warning(
