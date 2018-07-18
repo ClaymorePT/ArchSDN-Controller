@@ -180,7 +180,7 @@ def init_switch_flows(switch_obj):
         )
     )
 
-    # Flow for ARP Requests
+    # Flow for ARP Requests for targets in the service network.
     default_flows.append(
         ofp_parser.OFPFlowMod(
             datapath=switch_obj,
@@ -189,7 +189,7 @@ def init_switch_flows(switch_obj):
             command=ofp.OFPFC_ADD,
             priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
             match=ofp_parser.OFPMatch(
-                eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_ARP,
+                eth_type=ether.ETH_TYPE_ARP,
                 arp_op=1, arp_tha='00:00:00:00:00:00',
                 arp_spa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
                 arp_tpa=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
