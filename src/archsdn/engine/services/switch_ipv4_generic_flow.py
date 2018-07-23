@@ -746,12 +746,18 @@ def ipv4_generic_flow_activation(unidirectional_path,  *args, **kwargs):
 
     host_a_entity_obj = sector.query_entity(unidirectional_path.entity_a)
     host_b_entity_obj = sector.query_entity(unidirectional_path.entity_b)
+    mapped_ipv4_services = globals.mapped_services["IPv4"]["*"]
 
-    if (type(host_a_entity_obj), type(host_b_entity_obj)) == (Sector, Sector):
-        raise TypeError("Sector to Sector tunnel IPv4 tunnel makes no sense.")
+    if (type(host_a_entity_obj), type(host_b_entity_obj)) not in __activators:
+        raise TypeError(
+            "Scenario {:s} Not supported. "
+            "IPv4 generic service is only supported for the following scenarios: [{:s}].".format(
+                str((type(host_a_entity_obj), type(host_b_entity_obj))),
+                "; ".join(tuple((str(scn) for scn in __activators)))
+            )
+        )
 
     # Checking if IPv4 generic service is already established
-    mapped_ipv4_services = globals.mapped_services["IPv4"]["*"]
     if (host_a_entity_obj.id, host_b_entity_obj.id) in mapped_ipv4_services:
         raise Exception(
             "IPv4 service for generic traffic from {:s} to {:s}, already exists.".format(

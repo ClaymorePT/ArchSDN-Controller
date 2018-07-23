@@ -1158,7 +1158,9 @@ def icmpv4_flow_activation(bidirectional_path, *args, **kwargs):
 
     if (type(host_a_entity_obj), type(host_b_entity_obj)) not in __activators:
         raise TypeError(
+            "Scenario {:s} Not supported. "
             "ICMPv4 service is only supported for the following scenarios: [{:s}].".format(
+                str((type(host_a_entity_obj), type(host_b_entity_obj))),
                 "; ".join(tuple((str(scn) for scn in __activators)))
             )
         )
