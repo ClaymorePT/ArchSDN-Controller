@@ -1,10 +1,10 @@
 
 class DatabaseError(Exception):
-    def __init__(self, error):
+    def __init__(self, error="Database Error"):
         if isinstance(error, Exception):
-            error_str = str(error)
+            error_str = "Database Error: {:s}".format(str(error))
         elif isinstance(error, str):
-            error_str = error
+            error_str = "Database Error: {:s}".format(error)
         else:
             raise TypeError("error argument type is not supported")
         self.__error_description = error_str if error_str != "" else repr(error)
