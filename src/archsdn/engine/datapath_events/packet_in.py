@@ -505,6 +505,7 @@ def process_event(packet_in_event):
                     target_switch_port = addr_info_dst["port"]
                     host_a_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
                     host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
+                    start_time = time.time()
 
                     # Construct a BiDirectional Path between Host A and Host B.
                     bidirectional_path = sector.construct_bidirectional_path(
@@ -552,9 +553,14 @@ def process_event(packet_in_event):
                         )
                     )
 
-                    _log.warning(
-                        "ICMP4 tunnel opened between hosts {:s} and {:s}.".format(
-                            str(host_a_entity_id), str(host_b_entity_id)
+                    _log.info(
+                        "ICMPv4 Scenario with ID {:s} is now active. "
+                        "Implemented in {:f} seconds. "
+                        "Path has length {:d}. "
+                        "".format(
+                            str(global_path_search_id),
+                            time.time() - start_time,
+                            len(bidirectional_path)
                         )
                     )
 
@@ -623,10 +629,13 @@ def process_event(packet_in_event):
                                     )
 
                                     _log.info(
-                                        "Remote Scenario with ID {:s} is now active. Implemented in {:f} seconds"
+                                        "ICMPv4 Scenario with ID {:s} is now active. "
+                                        "Implemented in {:f} seconds. "
+                                        "Path has length {:d}. "
                                         "".format(
                                             str(global_path_search_id),
-                                            time.time() - start_time
+                                            time.time() - start_time,
+                                            len(bidirectional_path) + service_activation_result["path_length"]
                                         )
                                     )
                                 else:
@@ -698,35 +707,89 @@ def process_event(packet_in_event):
                                         service_activation_result = {"success": False, "reason": str(ex)}
 
                                     forward_q_value = 0 if "q_value" not in service_activation_result else \
-                                    service_activation_result["q_value"]
-                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
-                                    if kspl:
-                                        if kspl > len(bidirectional_path):
-                                            globals.set_known_shortest_path(
-                                                controller_uuid,
-                                                pkt_ipv4_dst,
-                                                len(bidirectional_path)
-                                            )
-                                    else:
-                                        globals.set_known_shortest_path(
-                                            controller_uuid,
-                                            pkt_ipv4_dst,
-                                            len(bidirectional_path)
+                                        service_activation_result["q_value"]
+
+                                    if service_activation_result["success"]:
+                                        kspl = globals.get_known_shortest_path(
+                                            selected_sector_id,
+                                            pkt_ipv4_dst
                                         )
-                                    # Update kspl value since it may have been changed.
-                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
-                                    assert kspl, "kspl cannot be Zero or None."
+                                        if kspl and kspl > len(bidirectional_path) + service_activation_result[
+                                            "path_length"]:
+                                            globals.set_known_shortest_path(
+                                                selected_sector_id,
+                                                pkt_ipv4_dst,
+                                                len(bidirectional_path) + service_activation_result["path_length"]
+                                            )
+                                        else:
+                                            globals.set_known_shortest_path(
+                                                selected_sector_id,
+                                                pkt_ipv4_dst,
+                                                len(bidirectional_path) + service_activation_result["path_length"]
+                                            )
+                                        # Update kspl value since it may have been changed.
+                                        kspl = globals.get_known_shortest_path(
+                                            selected_sector_id,
+                                            pkt_ipv4_dst
+                                        )
+                                        assert kspl, "kspl cannot be Zero or None."
 
+                                        reward = bidirectional_path.remaining_bandwidth_average / kspl * \
+                                            len(bidirectional_path)
 
-                                    if not service_activation_result["success"]:
-                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
-                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+                                        old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                        globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
 
-                                        _log.debug(
-                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                        _log.info(
+                                            "Selected Sector: {:s}; "
+                                            "Old Q-Value: {:f}; "
+                                            "New Q-Value: {:f}; "
+                                            "Reward: {:f}; "
+                                            "Forward Q-Value: {:f}."
                                             "".format(
-                                                old_q_value, new_q_value, -1, forward_q_value
+                                                str(selected_sector_id),
+                                                old_q_value, new_q_value, reward, forward_q_value,
+                                            )
+                                        )
+
+                                        local_service_scenario = services.icmpv4_flow_activation(
+                                            bidirectional_path,
+                                            local_mpls_label,
+                                            target_ipv4
+                                        )
+
+                                        globals.set_active_scenario(
+                                            global_path_search_id,
+                                            (
+                                                (id(local_service_scenario),), (selected_sector_id,)
+                                            )
+                                        )
+
+                                        _log.info(
+                                            "ICMPv4 Scenario with ID {:s} is now active. "
+                                            "Implemented in {:f} seconds. "
+                                            "Path has length {:d}. "
+                                            "".format(
+                                                str(global_path_search_id),
+                                                time.time() - start_time,
+                                                len(bidirectional_path) + service_activation_result["path_length"]
+                                            )
+                                        )
+
+                                    else:
+                                        old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                                        globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
+
+                                        _log.info(
+                                            "Selected Sector: {:s}; "
+                                            "Old Q-Value: {:f}; "
+                                            "New Q-Value: {:f}; "
+                                            "Reward: {:f}; "
+                                            "Forward Q-Value: {:f}."
+                                            "".format(
+                                                str(selected_sector_id), old_q_value, new_q_value, -1, forward_q_value
                                             )
                                         )
 
@@ -747,41 +810,6 @@ def process_event(packet_in_event):
                                                 )
                                             )
 
-                                    else:
-                                        reward = bidirectional_path.remaining_bandwidth_average / kspl * \
-                                                 len(bidirectional_path)
-
-                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
-                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
-
-                                        _log.debug(
-                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
-                                            "".format(
-                                                old_q_value, new_q_value, reward, forward_q_value
-                                            )
-                                        )
-
-                                        local_service_scenario = services.icmpv4_flow_activation(
-                                            bidirectional_path,
-                                            local_mpls_label,
-                                            target_ipv4
-                                        )
-
-                                        globals.set_active_scenario(
-                                            global_path_search_id,
-                                            (
-                                                (id(local_service_scenario),), (selected_sector_id,)
-                                            )
-                                        )
-
-                                        _log.info(
-                                            "Remote Scenario with ID {:s} is now active. Implemented in {:s}"
-                                            "".format(
-                                                str(global_path_search_id),
-                                                time.ctime(time.time() - start_time)
-                                            )
-                                        )
                         except central.NoResultsAvailable:
                             _log.error(
                                 "Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
@@ -1044,6 +1072,7 @@ def process_event(packet_in_event):
                         try:
                             start_time = time.time()
                             target_ipv4 = global_path_search_id[2]
+                            target_ipv4_str = str(target_ipv4)
                             target_host_info = central.query_address_info(ipv4=target_ipv4)
                             host_a_entity_id = sector.query_connected_entity_id(dp_id, p_in_port)
                             target_sector_id = target_host_info.controller_id
@@ -1078,7 +1107,40 @@ def process_event(packet_in_event):
                                     }
                                 )
 
+                                forward_q_value = 0 if "q_value" not in service_activation_result else \
+                                    service_activation_result["q_value"]
+
                                 if service_activation_result["success"]:
+                                    kspl = globals.get_known_shortest_path(
+                                        target_host_info.controller_id,
+                                        target_ipv4_str
+                                    )
+                                    if kspl and kspl > len(unidirectional_path) + service_activation_result[
+                                        "path_length"]:
+                                        globals.set_known_shortest_path(
+                                            target_host_info.controller_id,
+                                            target_ipv4_str,
+                                            len(unidirectional_path) + service_activation_result["path_length"]
+                                        )
+                                    else:
+                                        globals.set_known_shortest_path(
+                                            target_host_info.controller_id,
+                                            target_ipv4_str,
+                                            len(unidirectional_path) + service_activation_result["path_length"]
+                                        )
+                                    kspl = globals.get_known_shortest_path(
+                                        target_host_info.controller_id,
+                                        target_ipv4_str
+                                    )
+                                    assert kspl, "kspl cannot be Zero or None."
+
+                                    reward = unidirectional_path.remaining_bandwidth_average / kspl * len(
+                                        unidirectional_path)
+
+                                    old_q_value = globals.get_q_value(target_host_info.controller_id, target_ipv4_str)
+                                    new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                    globals.set_q_value(target_host_info.controller_id, target_ipv4_str, new_q_value)
+
                                     local_service_scenario = services.ipv4_generic_flow_activation(
                                         unidirectional_path,
                                         local_mpls_label,
@@ -1093,13 +1155,33 @@ def process_event(packet_in_event):
                                     )
 
                                     _log.info(
-                                        "Remote Scenario with ID {:s} is now active. Implemented in {:f} seconds"
+                                        "IPv4 Scenario with ID {:s} is now active. "
+                                        "Implemented in {:f} seconds. "
+                                        "Path has length {:d}. "
                                         "".format(
                                             str(global_path_search_id),
-                                            time.time() - start_time
+                                            time.time() - start_time,
+                                            len(unidirectional_path) + service_activation_result["path_length"]
                                         )
                                     )
                                 else:
+                                    old_q_value = globals.get_q_value(target_host_info.controller_id, target_ipv4_str)
+                                    new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                                    globals.set_q_value(target_host_info.controller_id, target_ipv4_str, new_q_value)
+
+                                    _log.info(
+                                        "Adjacent Sector: {:s}; "
+                                        "Updated Q-Values -> "
+                                        "Old Q-Value: {:f}; "
+                                        "New Q-Value: {:f}; "
+                                        "Reward: {:f}; "
+                                        "Forward Q-Value: {:f}."
+                                        "".format(
+                                            str(target_host_info.controller_id),
+                                            old_q_value, new_q_value, -1, forward_q_value
+                                        )
+                                    )
+
                                     _log.error(
                                         "Cannot establish a generic IPv4 flow path to sector {:s}.".format(
                                             str(target_sector_id)
@@ -1167,34 +1249,91 @@ def process_event(packet_in_event):
                                         service_activation_result = {"success": False, "reason": str(ex)}
 
                                     forward_q_value = 0 if "q_value" not in service_activation_result else \
-                                    service_activation_result["q_value"]
-                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
-                                    if kspl:
-                                        if kspl > len(unidirectional_path):
+                                        service_activation_result["q_value"]
+
+                                    if service_activation_result["success"]:
+                                        kspl = globals.get_known_shortest_path(
+                                            selected_sector_id,
+                                            pkt_ipv4_dst
+                                        )
+                                        if kspl and kspl > len(unidirectional_path) + service_activation_result[
+                                            "path_length"]:
                                             globals.set_known_shortest_path(
-                                                controller_uuid,
+                                                selected_sector_id,
                                                 pkt_ipv4_dst,
                                                 len(unidirectional_path)
                                             )
-                                    else:
-                                        globals.set_known_shortest_path(
-                                            controller_uuid,
-                                            pkt_ipv4_dst,
-                                            len(unidirectional_path)
+                                        else:
+                                            globals.set_known_shortest_path(
+                                                selected_sector_id,
+                                                pkt_ipv4_dst,
+                                                len(unidirectional_path) + service_activation_result["path_length"]
+                                            )
+                                        # Update kspl value since it may have been changed.
+                                        kspl = globals.get_known_shortest_path(
+                                            selected_sector_id,
+                                            pkt_ipv4_dst
                                         )
-                                    # Update kspl value since it may have been changed.
-                                    kspl = globals.get_known_shortest_path(controller_uuid, pkt_ipv4_dst)
-                                    assert kspl, "kspl cannot be Zero or None."
+                                        assert kspl, "kspl cannot be Zero or None."
 
+                                        reward = unidirectional_path.remaining_bandwidth_average / kspl * \
+                                                 len(unidirectional_path)
 
-                                    if not service_activation_result["success"]:
-                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
-                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
+                                        old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                        globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
 
-                                        _log.debug(
-                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
+                                        _log.info(
+                                            "Selected Sector: {:s}; "
+                                            "Updated Q-Values -> "
+                                            "Old Q-Value: {:f}; "
+                                            "New Q-Value: {:f}; "
+                                            "Reward: {:f}; "
+                                            "Forward Q-Value: {:f}; "
                                             "".format(
+                                                str(selected_sector_id),
+                                                old_q_value, new_q_value, reward, forward_q_value,
+                                            )
+                                        )
+
+                                        local_service_scenario = services.ipv4_generic_flow_activation(
+                                            unidirectional_path,
+                                            local_mpls_label,
+                                            target_ipv4
+                                        )
+
+                                        globals.set_active_scenario(
+                                            global_path_search_id,
+                                            (
+                                                (id(local_service_scenario),), (selected_sector_id,)
+                                            )
+                                        )
+
+                                        _log.info(
+                                            "IPv4 Scenario with ID {:s} is now active. "
+                                            "Implemented in {:f} seconds. "
+                                            "Path has length {:d}. "
+                                            "".format(
+                                                str(global_path_search_id),
+                                                time.time() - start_time,
+                                                len(unidirectional_path) + service_activation_result["path_length"]
+                                            )
+                                        )
+
+                                    else:
+                                        old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
+                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                                        globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
+
+                                        _log.info(
+                                            "Selected Sector: {:s}; "
+                                            "Updated Q-Values -> "
+                                            "Old Q-Value: {:f}; "
+                                            "New Q-Value: {:f}; "
+                                            "Reward: {:f}; "
+                                            "Forward Q-Value: {:f}."
+                                            "".format(
+                                                str(selected_sector_id),
                                                 old_q_value, new_q_value, -1, forward_q_value
                                             )
                                         )
@@ -1216,41 +1355,6 @@ def process_event(packet_in_event):
                                                 )
                                             )
 
-                                    else:
-                                        reward = unidirectional_path.remaining_bandwidth_average / kspl * \
-                                                 len(unidirectional_path)
-
-                                        old_q_value = globals.get_q_value(controller_uuid, pkt_ipv4_dst)
-                                        new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                                        globals.set_q_value(controller_uuid, pkt_ipv4_dst, new_q_value)
-
-                                        _log.debug(
-                                            "Old Q-Value: {:f}; New Q-Value: {:f}; Reward: {:f}; Forward Q-Value: {:f}."
-                                            "".format(
-                                                old_q_value, new_q_value, reward, forward_q_value
-                                            )
-                                        )
-
-                                        local_service_scenario = services.ipv4_generic_flow_activation(
-                                            unidirectional_path,
-                                            local_mpls_label,
-                                            target_ipv4
-                                        )
-
-                                        globals.set_active_scenario(
-                                            global_path_search_id,
-                                            (
-                                                (id(local_service_scenario),), (selected_sector_id,)
-                                            )
-                                        )
-
-                                        _log.info(
-                                            "Remote Scenario with ID {:s} is now active. Implemented in {:s}"
-                                            "".format(
-                                                str(global_path_search_id),
-                                                time.ctime(time.time() - start_time)
-                                            )
-                                        )
                         except central.NoResultsAvailable:
                             _log.error(
                                 "Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
@@ -1295,7 +1399,7 @@ def process_event(packet_in_event):
 
         else:
             _log.warning(
-                "IP packet Type ({:X}), sent from {:s} to {:s}, is not supported. ".format(
+                "IP packet Type ({:X}), sent from {:s} to {:s}, is not supported. Discarding packet.".format(
                     ip_layer.proto, ip_layer.src, ip_layer.dst
                 )
             )
