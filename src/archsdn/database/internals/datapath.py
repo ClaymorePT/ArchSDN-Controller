@@ -3,7 +3,7 @@ import logging
 from copy import deepcopy
 
 
-from .exceptions import DatapathNotRegistered, DatapathAlreadyRegistered
+from .exceptions import DatapathNotRegistered, DatapathAlreadyRegistered, DatabaseError
 from .data_validation import is_ipv4_port_tuple, is_ipv6_port_tuple
 
 from ...database import data
@@ -34,8 +34,7 @@ def query_info(datapath_id):
         raise DatapathNotRegistered()
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def register(datapath_id, ipv4_info=None, ipv6_info=None):
@@ -83,8 +82,7 @@ def register(datapath_id, ipv4_info=None, ipv6_info=None):
             }
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def remove(datapath_id):
@@ -107,8 +105,7 @@ def remove(datapath_id):
         raise DatapathNotRegistered()
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def is_registered(datapath_id):
@@ -120,8 +117,7 @@ def is_registered(datapath_id):
             return datapath_id in data.database_data["datapaths"]
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def dump_ids():
@@ -131,8 +127,7 @@ def dump_ids():
             return tuple(data.database_data["datapaths"].keys())
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def dump_datapath_clients_ids(datapath_id):
@@ -149,5 +144,4 @@ def dump_datapath_clients_ids(datapath_id):
             )
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)

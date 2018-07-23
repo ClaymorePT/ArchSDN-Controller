@@ -4,7 +4,7 @@ from netaddr import EUI
 from ipaddress import IPv4Address, IPv6Address
 from copy import deepcopy
 
-from .exceptions import ClientNotRegistered, ClientAlreadyRegistered, AddressNotRegistered
+from .exceptions import ClientNotRegistered, ClientAlreadyRegistered, AddressNotRegistered, DatabaseError
 
 from ...database import data
 
@@ -35,8 +35,7 @@ def query_info(client_id):
         raise ClientNotRegistered()
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def query_client_id(datapath_id, port_id, mac):
@@ -62,8 +61,7 @@ def query_client_id(datapath_id, port_id, mac):
             raise ClientNotRegistered()
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def query_address_info(ipv4=None, ipv6=None):
@@ -104,8 +102,7 @@ def query_address_info(ipv4=None, ipv6=None):
                 raise AddressNotRegistered()
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def register(datapath_id, port_id, mac):
@@ -141,8 +138,7 @@ def register(datapath_id, port_id, mac):
             return client_id
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def remove(client_id):
@@ -158,8 +154,7 @@ def remove(client_id):
         raise ClientNotRegistered()
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)
 
 
 def update_addresses(client_id, ipv4=None, ipv6=None):
@@ -188,5 +183,4 @@ def update_addresses(client_id, ipv4=None, ipv6=None):
             return client_id
 
     except Exception as ex:
-        _log.error(str(ex))
-        raise ex
+        raise DatabaseError(ex)

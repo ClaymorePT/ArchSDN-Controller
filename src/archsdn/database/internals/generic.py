@@ -5,8 +5,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 from copy import deepcopy
 
-from eventlet.semaphore import BoundedSemaphore
-
+from .exceptions import DatabaseError
 from ...database import data
 
 _log = logging.getLogger(__name__)
@@ -45,7 +44,7 @@ def initialise(location=":memory:", controller_id=None):
         data.database_semaphore = FakeSemaphore()
 
     elif isinstance(location, Path):
-        raise Exception("Only nemory database is supported.")
+        raise DatabaseError("Only memory database is supported.")
         # if location.exists():
         #     _log.info("Database exists! Using it and ignoring id present in config file")
         #
