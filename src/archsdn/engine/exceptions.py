@@ -4,15 +4,18 @@ class EngineException(Exception):
 
 
 class SectorException(EngineException):
-    pass
+    def __str__(self):
+        return "Sector Exception"
 
 
 class EntityException(EngineException):
-    pass
+    def __str__(self):
+        return "Entity Exception"
 
 
 class NetworkException(EngineException):
-    pass
+    def __str__(self):
+        return "Network Exception"
 
 
 class SectorGenericException(SectorException):
@@ -24,11 +27,13 @@ class SectorGenericException(SectorException):
 
 
 class EntityAlreadyRegistered(SectorException):
-    pass
+    def __str__(self):
+        return "Entity Already Registered"
 
 
 class EntityNotRegistered(SectorException):
-    pass
+    def __str__(self):
+        return "Entity Not Registered"
 
 
 class LinkException(SectorException):
@@ -40,15 +45,18 @@ class LinkException(SectorException):
 
 
 class EntitiesAlreadyConnected(SectorException):
-    pass
+    def __str__(self):
+        return "Entities Already Connected"
 
 
 class EntitiesNotConnected(SectorException):
-    pass
+    def __str__(self):
+        return "Entities Not Connected"
 
 
 class PortNotUsed(SectorException):
-    pass
+    def __str__(self):
+        return "Port Not Used"
 
 
 class UnexpectedConnectedEntity(SectorException):
@@ -60,15 +68,18 @@ class UnexpectedConnectedEntity(SectorException):
 
 
 class SwitchException(EntityException):
-    pass
+    def __str__(self):
+        return "Switch Exception"
 
 
 class PortAlreadyRegistered(SwitchException):
-    pass
+    def __str__(self):
+        return "Port Already Registered"
 
 
 class PortNotRegistered(SwitchException):
-    pass
+    def __str__(self):
+        return "Port Not Registered"
 
 
 class SwitchPortAlreadyConnected(LinkException):
@@ -88,4 +99,5 @@ class PathNotFound(SectorException):
 
 
 class CannotCreateScenario(SectorException):
-    pass
+    def __str__(self):
+        return "Cannot Create Scenario"
