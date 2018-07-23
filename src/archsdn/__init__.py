@@ -9,7 +9,8 @@ from archsdn.arg_parsing import parse_arguments
 from archsdn.helpers import custom_logging_callback, logger_module_name
 
 __process = None
-__log_format = '[{asctime:^s}][{levelname:^8s}][{name:s}|{funcName:s}|{lineno:d}]: {message:s}'
+__log_format = '[{asctime:^s}][{levelname:^8s}]: {message:s}'
+__log_format_debug = '[{asctime:^s}][{levelname:^8s}][{name:s}|{funcName:s}|{lineno:d}]: {message:s}'
 __log_datefmt = '%Y/%m/%d|%H:%M:%S.%f (%Z)'
 __log = None
 
@@ -30,12 +31,12 @@ def start_controller():
         parsed_args = parse_arguments()
 
         if sys.flags.debug:
-            logging.basicConfig(format=__log_format, datefmt=__log_datefmt, style='{', level=logging.DEBUG)
+            logging.basicConfig(format=__log_format_debug, datefmt=__log_datefmt, style='{', level=logging.DEBUG)
         else:
             logging.basicConfig(format=__log_format, datefmt=__log_datefmt, style='{', level=parsed_args.logLevel)
         __log = logging.getLogger(logger_module_name(__file__))
 
-        __log.info('{:s}'.format(str(parsed_args)))
+        __log.debug('Parsed Arguments: {:s}'.format(str(parsed_args)))
 
         if parsed_args.cip is None:
             raise Exception("Central Manager IP was not provided.")

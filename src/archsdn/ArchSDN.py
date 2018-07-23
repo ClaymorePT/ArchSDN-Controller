@@ -29,7 +29,8 @@ mac_eui48.word_sep = ":"
 sys.excepthook = (lambda tp, val, tb: custom_logging_callback(logging.getLogger(), logging.ERROR, tp, val, tb))
 
 # Initialize logger for this module
-_log_format = '[{asctime:^s}][{levelname:^8s}][{name:s}|{funcName:s}|{lineno:d}]: {message:s}'
+_log_format = '[{asctime:^s}][{levelname:^8s}]: {message:s}'
+_log_format_debug = '[{asctime:^s}][{levelname:^8s}][{name:s}|{funcName:s}|{lineno:d}]: {message:s}'
 _log_datefmt = '%Y/%m/%d|%H:%M:%S (%Z)'
 
 _log = logging.getLogger(logger_module_name(__file__))
@@ -102,7 +103,9 @@ class ArchSDN(RyuApp):
             for handler in root_log.handlers:
                 handler.setFormatter(
                     logging.Formatter(
-                        fmt=_log_format, datefmt=_log_datefmt, style='{'
+                        fmt=_log_format_debug if default_configs['logLevel'] == 'DEBUG' else _log_format,
+                        datefmt=_log_datefmt,
+                        style='{'
                     )
                 )
                 handler.setLevel = default_configs['logLevel']
@@ -110,8 +113,8 @@ class ArchSDN(RyuApp):
             #  End logging hack
 
             _log.info(
-                "Default Configurations: {:s}".format(
-                    "; ".join(list(("{}: {}".format(key, default_configs[key]) for key in default_configs)))
+                "Default Configurations:\n{:s}".format(
+                    "".join(list(("  {}: {}\n".format(key, default_configs[key]) for key in default_configs)))
                 )
             )
 
