@@ -318,7 +318,7 @@ def __activate_scenario(scenario_request):
     global_path_search_id = scenario_request['global_path_search_id']
     sector_requesting_service_id = UUID(scenario_request['sector_requesting_service'])
     scenario_mpls_label = scenario_request['mpls_label']
-    scenario_hash_val = scenario_request['hash_val']
+    scenario_hash_val = scenario_request['hash_val'] # hash value which identifies the switch that sends the traffic
 #    _log.debug("scenario_hash_val: {:x}".format(scenario_hash_val))
 
     source_controller_id = UUID(global_path_search_id[0])
@@ -381,7 +381,7 @@ def __activate_scenario(scenario_request):
                     sector_requesting_service_id,  # Sector from which the scenario request came
                     target_host_info.name,  # Target Hostname which identifies the host entity in this sector.
                     allocated_bandwith=100,  # Requested bandwidth for ICMP path
-                    sector_a_hash_val=scenario_hash_val  # hash value which identifies the switch that sends the traffic
+                    foreign_sector_hash_val=scenario_hash_val  # hash value which identifies the switch that sends the traffic
                 )
                 # Implementation notes:
                 #  'sector_a_hash_val' is necessary for the sector controller. In the use-case where multiple switches
@@ -439,12 +439,19 @@ def __activate_scenario(scenario_request):
                     "Old Q-Value: {:f}; "
                     "New Q-Value: {:f}; "
                     "Reward: {:f}; "
-                    "Forward Q-Value: {:f}.".format(
-                        old_q_value, new_q_value, reward, 1
+                    "Forward Q-Value: {:f}; "
+                    "KSPL: {:d};"
+                    "".format(
+                        old_q_value, new_q_value, reward, 1, kspl
                     )
                 )
 
-                _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+                _log.debug(
+                    "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
+                        str(global_path_search_id),
+                        len(bidirectional_path)
+                    )
+                )
 
                 return {
                     "success": True,
@@ -468,7 +475,7 @@ def __activate_scenario(scenario_request):
                         sector_requesting_service_id,
                         target_host_info.controller_id,
                         allocated_bandwith=100,
-                        sector_a_hash_val=scenario_hash_val
+                        foreign_sector_hash_val=scenario_hash_val
                     )
                     assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
 
@@ -542,15 +549,19 @@ def __activate_scenario(scenario_request):
                             "Old Q-Value: {:f}; "
                             "New Q-Value: {:f}; "
                             "Reward: {:f}; "
-                            "Forward Q-Value: {:f};".format(
+                            "Forward Q-Value: {:f};"
+                            "KSPL: {:d};"
+                            "".format(
                                 str(target_host_info.controller_id),
-                                old_q_value, new_q_value, reward, forward_q_value,
+                                old_q_value, new_q_value, reward, forward_q_value, kspl
                             )
                         )
 
-                        _log.info(
-                            "Scenario with ID {:s} is now active.".format(
-                                str(global_path_search_id))
+                        _log.debug(
+                            "Local Scenario with Global ID {:s} with local length {:d} is now active.".format(
+                                str(global_path_search_id),
+                                len(bidirectional_path)
+                            )
                         )
 
                         return {
@@ -575,7 +586,7 @@ def __activate_scenario(scenario_request):
                                 old_q_value, new_q_value, -1, forward_q_value
                             )
                         )
-                        _log.error("Failed to activate Scenario with ID {:s} through sector {:s}. "
+                        _log.debug("Failed to activate Scenario with ID {:s} through sector {:s}. "
                                    "Reason: {:s}.".format(
                                         str(target_host_info.controller_id),
                                         str(global_path_search_id),
@@ -623,7 +634,8 @@ def __activate_scenario(scenario_request):
                         bidirectional_path = sector.construct_bidirectional_path(
                             sector_requesting_service_id,
                             selected_sector_id,
-                            allocated_bandwith=100
+                            allocated_bandwith=100,
+                            foreign_sector_hash_val=scenario_hash_val
                         )
                         assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
 
@@ -684,9 +696,10 @@ def __activate_scenario(scenario_request):
                                 "New Q-Value: {:f}; "
                                 "Reward: {:f}; "
                                 "Forward Q-Value: {:f}."
+                                "KSPL: {:d};"
                                 "".format(
                                     str(selected_sector_id),
-                                    old_q_value, new_q_value, reward, forward_q_value
+                                    old_q_value, new_q_value, reward, forward_q_value, kspl
                                 )
                             )
                             entity_a_obj = sector.query_entity(bidirectional_path.entity_a)
@@ -709,7 +722,12 @@ def __activate_scenario(scenario_request):
                                 )
                             )
 
-                            _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+                            _log.debug(
+                                "Local Scenario with global ID {:s} with local length {:d} is now active.".format(
+                                    str(global_path_search_id),
+                                    len(bidirectional_path)
+                                )
+                            )
                             return {
                                 "success": True,
                                 "global_path_search_id": global_path_search_id,
@@ -736,7 +754,7 @@ def __activate_scenario(scenario_request):
                             )
 
                             _log.error(
-                                "Failed to activate Scenario with ID {:s} through Sector {:s}. Reason {:s}.".format(
+                                "Failed to activate Scenario with Global ID {:s} through Sector {:s}. Reason {:s}.".format(
                                     str(global_path_search_id),
                                     str(selected_sector_id),
                                     service_activation_result["reason"]
@@ -791,7 +809,7 @@ def __activate_scenario(scenario_request):
                 unidirectional_path = sector.construct_unidirectional_path(
                     sector_requesting_service_id,  # Sector from which the scenario request came
                     target_host_info.name,  # Target Hostname which identifies the host entity in this sector.
-                    sector_a_hash_val=scenario_hash_val  # hash value which identifies the switch that sends the traffic
+                    foreign_sector_hash_val=scenario_hash_val  # hash value which identifies the switch that sends the traffic
                 )
                 # Implementation notes:
                 #  'sector_a_hash_val' is necessary for the sector controller. In the use-case where multiple switches
@@ -850,12 +868,18 @@ def __activate_scenario(scenario_request):
                     "New Q-Value: {:f}; "
                     "Reward: {:f}; "
                     "Forward Q-Value: {:f}."
+                    "KSPL: {:d};"
                     "".format(
-                        old_q_value, new_q_value, reward, 1
+                        old_q_value, new_q_value, reward, 1, kspl
                     )
                 )
 
-                _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+                _log.info(
+                    "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
+                        str(global_path_search_id),
+                        len(unidirectional_path)
+                    )
+                )
 
                 return {
                     "success": True,
@@ -878,7 +902,7 @@ def __activate_scenario(scenario_request):
                     unidirectional_path = sector.construct_unidirectional_path(
                         sector_requesting_service_id,
                         target_host_info.controller_id,
-                        sector_a_hash_val=scenario_hash_val
+                        foreign_sector_hash_val=scenario_hash_val
                     )
                     assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
 
@@ -952,13 +976,19 @@ def __activate_scenario(scenario_request):
                             "New Q-Value: {:f}; "
                             "Reward: {:f}; "
                             "Forward Q-Value: {:f}."
+                            "KSPL: {:d};"
                             "".format(
                                 str(target_host_info.controller_id),
-                                old_q_value, new_q_value, reward, forward_q_value
+                                old_q_value, new_q_value, reward, forward_q_value, kspl
                             )
                         )
 
-                        _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+                        _log.debug(
+                            "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
+                                str(global_path_search_id),
+                                len(unidirectional_path)
+                            )
+                        )
 
                         return {
                             "success": True,
@@ -1032,7 +1062,7 @@ def __activate_scenario(scenario_request):
                         unidirectional_path = sector.construct_unidirectional_path(
                             sector_requesting_service_id,
                             selected_sector_id,
-                            allocated_bandwith=100
+                            foreign_sector_hash_val=scenario_hash_val
                         )
                         assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
 
@@ -1093,9 +1123,10 @@ def __activate_scenario(scenario_request):
                                 "New Q-Value: {:f}; "
                                 "Reward: {:f}; "
                                 "Forward Q-Value: {:f}."
+                                "KSPL: {:d};"
                                 "".format(
                                     str(selected_sector_id),
-                                    old_q_value, new_q_value, reward, forward_q_value
+                                    old_q_value, new_q_value, reward, forward_q_value, kspl
                                 )
                             )
                             entity_a_obj = sector.query_entity(unidirectional_path.entity_a)
@@ -1118,7 +1149,12 @@ def __activate_scenario(scenario_request):
                                 )
                             )
 
-                            _log.info("Remote Scenario with ID {:s} is now active.".format(str(global_path_search_id)))
+                            _log.info(
+                                "Local Scenario with ID {:s} and local length {:d} is now active.".format(
+                                    str(global_path_search_id),
+                                    len(unidirectional_path)
+                                )
+                            )
                             return {
                                 "success": True,
                                 "global_path_search_id": global_path_search_id,
