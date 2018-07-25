@@ -183,7 +183,7 @@ def process_event(dp_event):
         )
 
         # Kill global services starting, ending or passing through this sector, which use this port
-        for global_path_search_id in global_scenarios_to_kill:
+        for global_path_search_id in filter(globals.is_scenario_active, global_scenarios_to_kill):
             (_, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
 
             for sector_id in adjacent_sectors_ids:
