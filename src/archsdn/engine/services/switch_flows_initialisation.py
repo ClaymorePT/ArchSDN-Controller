@@ -113,7 +113,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.PORT_SEGREGATION_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_0_DISCOVERY_PRIORITY,
+            priority=globals.PORT_TABLE_DISCOVERY_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
                 ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
@@ -136,7 +136,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.PORT_SEGREGATION_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_0_DISCOVERY_PRIORITY,
+            priority=globals.PORT_TABLE_DISCOVERY_PRIORITY,
             match=ofp_parser.OFPMatch(eth_type=0xAAAA),
             instructions=[
                 ofp_parser.OFPInstructionActions(
@@ -163,7 +163,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.HOST_FILTERING_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_dst='ff:ff:ff:ff:ff:ff', eth_type=ether.ETH_TYPE_IP,
                 ipv4_src="0.0.0.0", ipv4_dst="255.255.255.255", ip_proto=inet.IPPROTO_UDP,
@@ -187,7 +187,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.HOST_FILTERING_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_3_GENERIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_3_GENERIC_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_ARP,
                 arp_op=1, arp_tha='00:00:00:00:00:00',
@@ -213,7 +213,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.HOST_FILTERING_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP, eth_dst=str(mac_service),
                 ipv4_dst=str(ipv4_service),
@@ -230,6 +230,33 @@ def init_switch_flows(switch_obj):
         )
     )
 
+    # Activate a flow to redirect to the controller ICMP packets sent from the host to the
+    #   network, from pkt_in_port.
+    default_flows.append(
+        ofp_parser.OFPFlowMod(
+            datapath=switch_obj,
+            cookie=0,
+            table_id=globals.HOST_FILTERING_TABLE,
+            command=ofp.OFPFC_ADD,
+            priority=globals.HOST_TABLE_LAYER_4_DEFAULT_PRIORITY,
+            match=ofp_parser.OFPMatch(
+                eth_type=ether.ETH_TYPE_IP,
+                ipv4_src=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+                ipv4_dst=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
+                ip_proto=inet.IPPROTO_ICMP,
+            ),
+            instructions=[
+                ofp_parser.OFPInstructionActions(
+                    ofp.OFPIT_APPLY_ACTIONS,
+                    [
+                        ofp_parser.OFPActionOutput(port=ofp.OFPP_CONTROLLER, max_len=ofp.OFPCML_NO_BUFFER)
+                    ]
+                )
+            ]
+        )
+    )
+
+
     # Activate a flow to redirect to the controller DNS packets sent from the host to the
     #   controller, from pkt_in_port.
     default_flows.append(
@@ -238,7 +265,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.HOST_FILTERING_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_dst=str(mac_service), eth_type=ether.ETH_TYPE_IP,
                 ipv4_dst=str(ipv4_service),
@@ -262,7 +289,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.HOST_FILTERING_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_3_DEFAULT_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_3_DEFAULT_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=(str(ipv4_network.network_address), str(ipv4_network.netmask)),
@@ -287,7 +314,7 @@ def init_switch_flows(switch_obj):
             cookie=0,
             table_id=globals.HOST_FILTERING_TABLE,
             command=ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(ipv4_service),

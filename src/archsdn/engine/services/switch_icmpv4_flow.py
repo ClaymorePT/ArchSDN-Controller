@@ -19,31 +19,29 @@ class __ICMPv4Service(Service):
         self.__mpls_label = mpls_label
 
     def __del__(self):
-        flows = []
         for flow_set in self.__scenario_flows:
-            flows = flows + list(flow_set)
-        for flow in flows:
-            switch_obj = globals.get_datapath_obj(flow.datapath.id)
-            if switch_obj.is_active:
-                switch_ofp_parser = switch_obj.ofproto_parser
-                switch_ofp = switch_obj.ofproto
-                _log.debug("Removing flow with cookie ID 0x{:x}.".format(flow.cookie))
+            for flow in flow_set:
+                switch_obj = globals.get_datapath_obj(flow.datapath.id)
+                if switch_obj.is_active:
+                    switch_ofp_parser = switch_obj.ofproto_parser
+                    switch_ofp = switch_obj.ofproto
+                    _log.debug("Removing flow with cookie ID 0x{:x}.".format(flow.cookie))
 
-                switch_obj.send_msg(  # Removes the registered flow from this switch.
-                    switch_ofp_parser.OFPFlowMod(
-                        datapath=switch_obj,
-                        cookie=flow.cookie,
-                        cookie_mask=0xFFFFFFFFFFFFFFFF,
-                        table_id=switch_ofp.OFPTT_ALL,
-                        command=switch_ofp.OFPFC_DELETE,
-                        out_port=switch_ofp.OFPP_ANY,
-                        out_group=switch_ofp.OFPG_ANY,
+                    switch_obj.send_msg(  # Removes the registered flow from this switch.
+                        switch_ofp_parser.OFPFlowMod(
+                            datapath=switch_obj,
+                            cookie=flow.cookie,
+                            cookie_mask=0xFFFFFFFFFFFFFFFF,
+                            table_id=switch_ofp.OFPTT_ALL,
+                            command=switch_ofp.OFPFC_DELETE,
+                            out_port=switch_ofp.OFPP_ANY,
+                            out_group=switch_ofp.OFPG_ANY,
+                        )
                     )
-                )
-                globals.send_msg(
-                    switch_ofp_parser.OFPBarrierRequest(switch_obj),
-                    reply_cls=switch_ofp_parser.OFPBarrierReply
-                )
+                    globals.send_msg(
+                        switch_ofp_parser.OFPBarrierRequest(switch_obj),
+                        reply_cls=switch_ofp_parser.OFPBarrierReply
+                    )
         globals.free_mpls_label_id(self.__mpls_label)
 
     @property
@@ -88,7 +86,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -108,7 +106,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -152,7 +150,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
                 ),
@@ -173,7 +171,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
                 ),
@@ -207,7 +205,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -230,7 +228,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
             match=side_a_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -250,7 +248,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_POP_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_POP_PRIORITY,
             match=side_a_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -271,7 +269,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_4_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -309,7 +307,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_b_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -332,7 +330,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
             match=side_b_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -352,7 +350,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_POP_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_POP_PRIORITY,
             match=side_b_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -373,7 +371,7 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_4_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_b_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -440,7 +438,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_dst=str(target_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -462,7 +460,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_4_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_dst=str(host_entity_obj.ipv4), ipv4_src=str(target_ipv4),  ip_proto=inet.IPPROTO_ICMP
@@ -482,7 +480,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_POP_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_POP_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -502,7 +500,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_POP_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_POP_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -552,7 +550,7 @@ def __icmpv4_flow_activation_host_to_sector(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -573,7 +571,7 @@ def __icmpv4_flow_activation_host_to_sector(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -608,7 +606,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=local_host_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_dst=str(target_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -631,7 +629,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=local_host_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -651,7 +649,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=local_host_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_POP_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_POP_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -672,7 +670,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=local_host_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_4_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(target_ipv4), ipv4_dst=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -710,7 +708,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=sector_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -730,7 +728,7 @@ def __icmpv4_flow_activation_host_to_sector(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=sector_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_CHANGE_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -796,7 +794,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_POP_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_POP_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_mpls_label
             ),
@@ -816,7 +814,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_SWITCH_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_SWITCH_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_mpls_label
             ),
@@ -835,7 +833,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_dst=str(source_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -857,7 +855,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(source_ipv4), ipv4_dst=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -908,7 +906,7 @@ def __icmpv4_flow_activation_sector_to_host(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -929,7 +927,7 @@ def __icmpv4_flow_activation_sector_to_host(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -964,7 +962,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=sector_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_mpls_label
             ),
@@ -985,7 +983,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=sector_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_CHANGE_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -1021,7 +1019,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
             command=local_host_side_side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_1_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_dst=str(source_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
@@ -1044,7 +1042,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=local_host_side_side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -1064,7 +1062,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=local_host_side_side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_POP_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_POP_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -1085,7 +1083,7 @@ def __icmpv4_flow_activation_sector_to_host(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=local_host_side_side_b_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_4_LAYER_4_SPECIFIC_PRIORITY,
+            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(source_ipv4), ipv4_dst=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP

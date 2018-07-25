@@ -87,7 +87,7 @@ def __bidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=requesting_sector_mpls_label
             ),
@@ -107,7 +107,7 @@ def __bidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -156,7 +156,7 @@ def __bidirectional_mpls_flow_activation(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -177,7 +177,7 @@ def __bidirectional_mpls_flow_activation(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -212,7 +212,7 @@ def __bidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=sector_a_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_a_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=requesting_sector_mpls_label
             ),
@@ -233,7 +233,7 @@ def __bidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=sector_a_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_CHANGE_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_a_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -270,7 +270,7 @@ def __bidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=sector_b_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_b_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -290,7 +290,7 @@ def __bidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=sector_b_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_CHANGE_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_b_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),
@@ -353,7 +353,7 @@ def __unidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=requesting_sector_mpls_label
             ),
@@ -400,7 +400,7 @@ def __unidirectional_mpls_flow_activation(
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
                 ),
@@ -436,7 +436,7 @@ def __unidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.SECTOR_FILTERING_TABLE,
             command=sector_a_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_2_MPLS_CHANGE_PRIORITY,
+            priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_a_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=requesting_sector_mpls_label
             ),
@@ -472,7 +472,7 @@ def __unidirectional_mpls_flow_activation(
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=sector_b_side_switch_ofp.OFPFC_ADD,
-            priority=globals.TABLE_3_MPLS_SWITCH_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
             match=sector_b_side_switch_ofp_parser.OFPMatch(
                 in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
             ),

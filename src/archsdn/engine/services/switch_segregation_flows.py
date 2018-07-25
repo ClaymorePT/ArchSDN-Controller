@@ -17,7 +17,7 @@ def sector_segregation_flow_activation(switch_obj, in_port):
         cookie=0,
         table_id=globals.PORT_SEGREGATION_TABLE,
         command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_0_PORT_PRIORITY,
+        priority=globals.PORT_TABLE_PORT_PRIORITY,
         match=ofp_parser.OFPMatch(
             in_port=in_port, eth_type=ether.ETH_TYPE_MPLS
         ),
@@ -39,7 +39,7 @@ def switch_segregation_flow_activation(switch_obj, in_port):
         cookie=0,
         table_id=globals.PORT_SEGREGATION_TABLE,
         command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_0_PORT_PRIORITY,
+        priority=globals.PORT_TABLE_PORT_PRIORITY,
         match=ofp_parser.OFPMatch(
             in_port=in_port, eth_type=ether.ETH_TYPE_MPLS
         ),
@@ -61,7 +61,7 @@ def host_segregation_flow_activation(switch_obj, in_port, host_mac_addr):
         cookie=0,
         table_id=globals.PORT_SEGREGATION_TABLE,
         command=ofp.OFPFC_ADD,
-        priority=globals.TABLE_0_PORT_PRIORITY,
+        priority=globals.PORT_TABLE_PORT_PRIORITY,
         match=ofp_parser.OFPMatch(
             in_port=in_port,
             eth_src=host_mac_addr,
