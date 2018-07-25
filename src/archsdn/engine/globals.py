@@ -350,9 +350,9 @@ def free_mpls_label_id(label_id):
 
     with __mpls_lock:
         if label_id <= 16:
-            raise ValueError("Mpls label ID cannot be lower than 16")
+            raise ValueError("Mpls label ID value must be higher than 16")
         if label_id > __mpls_label_id_counter or label_id in __recycled_mpls_labels:
-            raise ValueError("Label ID was not allocated.")
+            raise ValueError("Label ID was not allocated")
 
         __recycled_mpls_labels.append(label_id)
 
