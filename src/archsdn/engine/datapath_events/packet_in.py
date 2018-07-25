@@ -631,11 +631,13 @@ def process_event(packet_in_event):
                                     _log.info(
                                         "ICMPv4 Scenario with ID {:s} is now active. "
                                         "Implemented in {:f} seconds. "
-                                        "Path has length {:d}. "
+                                        "Global Path has length {:d}. "
+                                        "Local Path has length {:d}. "
                                         "".format(
                                             str(global_path_search_id),
                                             time.time() - start_time,
-                                            len(bidirectional_path) + service_activation_result["path_length"]
+                                            len(bidirectional_path) + service_activation_result["path_length"],
+                                            len(bidirectional_path)
                                         )
                                     )
                                 else:
@@ -747,9 +749,10 @@ def process_event(packet_in_event):
                                             "New Q-Value: {:f}; "
                                             "Reward: {:f}; "
                                             "Forward Q-Value: {:f}."
+                                            "KSPL: {:d}."
                                             "".format(
                                                 str(selected_sector_id),
-                                                old_q_value, new_q_value, reward, forward_q_value,
+                                                old_q_value, new_q_value, reward, forward_q_value, kspl
                                             )
                                         )
 
@@ -769,11 +772,13 @@ def process_event(packet_in_event):
                                         _log.info(
                                             "ICMPv4 Scenario with ID {:s} is now active. "
                                             "Implemented in {:f} seconds. "
-                                            "Path has length {:d}. "
+                                            "Global Path has length {:d}. "
+                                            "Local Path has length {:d}. "
                                             "".format(
                                                 str(global_path_search_id),
                                                 time.time() - start_time,
-                                                len(bidirectional_path) + service_activation_result["path_length"]
+                                                len(bidirectional_path) + service_activation_result["path_length"],
+                                                len(bidirectional_path)
                                             )
                                         )
 
@@ -1155,6 +1160,20 @@ def process_event(packet_in_event):
                                     )
 
                                     _log.info(
+                                        "Adjacent Sector: {:s}; "
+                                        "Updated Q-Values -> "
+                                        "Old Q-Value: {:f}; "
+                                        "New Q-Value: {:f}; "
+                                        "Reward: {:f}; "
+                                        "Forward Q-Value: {:f}; "
+                                        "KSPL: {:d}"
+                                        "".format(
+                                            str(target_host_info.controller_id),
+                                            old_q_value, new_q_value, reward, forward_q_value, kspl
+                                        )
+                                    )
+
+                                    _log.info(
                                         "IPv4 Scenario with ID {:s} is now active. "
                                         "Implemented in {:f} seconds. "
                                         "Path has length {:d}. "
@@ -1290,9 +1309,10 @@ def process_event(packet_in_event):
                                             "New Q-Value: {:f}; "
                                             "Reward: {:f}; "
                                             "Forward Q-Value: {:f}; "
+                                            "KSPL: {:d}"
                                             "".format(
                                                 str(selected_sector_id),
-                                                old_q_value, new_q_value, reward, forward_q_value,
+                                                old_q_value, new_q_value, reward, forward_q_value, kspl
                                             )
                                         )
 
@@ -1312,11 +1332,13 @@ def process_event(packet_in_event):
                                         _log.info(
                                             "IPv4 Scenario with ID {:s} is now active. "
                                             "Implemented in {:f} seconds. "
-                                            "Path has length {:d}. "
+                                            "Global Path has length {:d}. "
+                                            "Local Path has length {:d}. "
                                             "".format(
                                                 str(global_path_search_id),
                                                 time.time() - start_time,
-                                                len(unidirectional_path) + service_activation_result["path_length"]
+                                                len(unidirectional_path) + service_activation_result["path_length"],
+                                                len(unidirectional_path)
                                             )
                                         )
 

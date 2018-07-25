@@ -102,7 +102,7 @@ class __OneDirectionPath(SectorPath):
         self.__bandwidth_dealocation_callback()
 
     def __len__(self):
-        return len(self.__sector_path)
+        return len(self.__sector_path) - 1
 
     def id(self):
         return id(self)
@@ -244,7 +244,7 @@ class __BiDirectionPath(SectorPath):
         self.__bandwidth_dealocation_callback()
 
     def __len__(self):
-        return len(self.__sector_path)
+        return len(self.__sector_path) - 1
 
     def id(self):
         return id(self)
@@ -848,7 +848,7 @@ def construct_unidirectional_path(
         origin_id,
         target_id,
         allocated_bandwith=None,
-        sector_a_hash_val=None,
+        foreign_sector_hash_val=None,
 ):
     try:
         with __lock:
@@ -862,11 +862,11 @@ def construct_unidirectional_path(
             net_cpy = __net.copy()
 
             # If hash values are provided
-            if isinstance(query_entity(origin_id), Sector) and sector_a_hash_val is not None:
+            if isinstance(query_entity(origin_id), Sector) and foreign_sector_hash_val is not None:
                 remove_links = []
                 for dst_id in net_cpy[origin_id]:
                     for port_id in net_cpy[origin_id][dst_id]:
-                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != sector_a_hash_val:
+                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != foreign_sector_hash_val:
                             remove_links.append((dst_id, port_id))
 
                 for (dst_id, port_id) in remove_links:
@@ -1002,10 +1002,10 @@ def construct_unidirectional_path(
             )
 
             __log.debug(
-                "Path established ([{:s}]) using edges ([{:s}]) {:s}.".format(
-                    "][".join(tuple((str(i) for i in path))),
-                    "][".join(tuple((str(i) for i in edges))),
-                    "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
+                "Unidirectional Path allocated{:s}\n{:s}{:s}".format(
+                    " with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ".",
+                    "  Path: ([{:s}])\n".format("][".join(tuple((str(i) for i in path)))),
+                    "  Edges ([{:s}]).".format("][".join(tuple((str(i) for i in edges))))
                 )
             )
 
@@ -1028,28 +1028,12 @@ def construct_bidirectional_path(
         origin_id,
         target_id,
         allocated_bandwith=None,
-        sector_a_hash_val=None,
+        foreign_sector_hash_val=None,
 ):
     '''
         Constructs the scenario specified by :param scenario_type.
 
-        :param scenario_type:
-        :param origin_id:
-        :param target_id:
-        :param allocated_bandwith:
-        :param sector_a_hash_val:
-        :param sector_b_shash_val:
-        :return:
     '''
-    # __log.debug(
-    #     "construct_bidirectional_path: "
-    #     "origin_id: {:s}, target_id: {:s}, allocated_bandwith: {:d}, sector_a_hash_val: {:s}".format(
-    #         str(origin_id),
-    #         str(target_id),
-    #         allocated_bandwith,
-    #         "{:x}".format(sector_a_hash_val) if sector_a_hash_val else "None"
-    #     )
-    # )
 
     try:
         with __lock:
@@ -1063,11 +1047,11 @@ def construct_bidirectional_path(
             net_cpy = __net.copy()
 
             # If hash values are provided
-            if isinstance(query_entity(origin_id), Sector) and sector_a_hash_val is not None:
+            if isinstance(query_entity(origin_id), Sector) and foreign_sector_hash_val is not None:
                 remove_links = []
                 for dst_id in net_cpy[origin_id]:
                     for port_id in net_cpy[origin_id][dst_id]:
-                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != sector_a_hash_val:
+                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != foreign_sector_hash_val:
                             remove_links.append((dst_id, port_id))
 
                 for (dst_id, port_id) in remove_links:
@@ -1251,10 +1235,10 @@ def construct_bidirectional_path(
             )
 
             __log.debug(
-                "Path allocated ([{:s}]) using edges ([{:s}]) {:s}.".format(
-                    "][".join(tuple((str(i) for i in path))),
-                    "][".join(tuple((str(i) for i in edges))),
-                    "with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ""
+                "Bidirectional Path allocated{:s}\n{:s}{:s}".format(
+                    " with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ".",
+                    "  Path: ([{:s}])\n".format("][".join(tuple((str(i) for i in path)))),
+                    "  Edges ([{:s}]).".format("][".join(tuple((str(i) for i in edges))))
                 )
             )
             return sector_path
