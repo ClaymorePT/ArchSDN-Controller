@@ -893,12 +893,12 @@ def construct_unidirectional_path(
                 tail_id = shortest_path[2]
                 switch_id = shortest_path[1]
                 port_in = max(
-                    (port for port in __net[switch_id][head_id]),
-                    key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
+                    (port for port in net_cpy[switch_id][head_id]),
+                    key=(lambda p: net_cpy[switch_id][head_id][p]['data']['available_speed'])
                 )
                 port_out = max(
-                    (port for port in __net[switch_id][tail_id]),
-                    key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                    (port for port in net_cpy[switch_id][tail_id]),
+                    key=(lambda p: net_cpy[switch_id][tail_id][p]['data']['available_speed'])
                 )
                 path.append(head_id)
                 path.append((switch_id, port_in, port_out))
@@ -937,12 +937,12 @@ def construct_unidirectional_path(
                     after_ent_id = shortest_path[i+1]
                     switch_id = shortest_path[i]
                     port_in = max(
-                        (port for port in __net[switch_id][before_ent_id]),
-                        key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
+                        (port for port in net_cpy[switch_id][before_ent_id]),
+                        key=(lambda p: net_cpy[switch_id][before_ent_id][p]['data']['available_speed'])
                     )
                     port_out = max(
-                        (port for port in __net[switch_id][after_ent_id]),
-                        key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
+                        (port for port in net_cpy[switch_id][after_ent_id]),
+                        key=(lambda p: net_cpy[switch_id][after_ent_id][p]['data']['available_speed'])
                     )
                     if before_ent_id == head_id:
                         edges.append((before_ent_id, switch_id, port_in))
@@ -1090,12 +1090,12 @@ def construct_bidirectional_path(
                 tail_id = shortest_path[2]
                 switch_id = shortest_path[1]
                 port_in = max(
-                    (port for port in __net[switch_id][head_id]),
-                    key=(lambda p: __net[switch_id][head_id][p]['data']['available_speed'])
+                    (port for port in net_cpy[switch_id][head_id]),
+                    key=(lambda p: net_cpy[switch_id][head_id][p]['data']['available_speed'])
                 )
                 port_out = max(
-                    (port for port in __net[switch_id][tail_id]),
-                    key=(lambda p: __net[switch_id][tail_id][p]['data']['available_speed'])
+                    (port for port in net_cpy[switch_id][tail_id]),
+                    key=(lambda p: net_cpy[switch_id][tail_id][p]['data']['available_speed'])
                 )
                 path.append(head_id)
                 path.append((switch_id, port_in, port_out))
@@ -1156,12 +1156,12 @@ def construct_bidirectional_path(
                     after_ent_id = shortest_path[i+1]
                     switch_id = shortest_path[i]
                     port_in = max(
-                        (port for port in __net[switch_id][before_ent_id]),
-                        key=(lambda p: __net[switch_id][before_ent_id][p]['data']['available_speed'])
+                        (port for port in net_cpy[switch_id][before_ent_id]),
+                        key=(lambda p: net_cpy[switch_id][before_ent_id][p]['data']['available_speed'])
                     )
                     port_out = max(
-                        (port for port in __net[switch_id][after_ent_id]),
-                        key=(lambda p: __net[switch_id][after_ent_id][p]['data']['available_speed'])
+                        (port for port in net_cpy[switch_id][after_ent_id]),
+                        key=(lambda p: net_cpy[switch_id][after_ent_id][p]['data']['available_speed'])
                     )
                     path.append((switch_id, port_in, port_out))
                     if before_ent_id == head_id:
