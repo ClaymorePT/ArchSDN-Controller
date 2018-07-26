@@ -62,16 +62,21 @@ class __MPLSService(Service):
 
 
 def __bidirectional_mpls_flow_activation(
-        local_path, local_mpls_label, requesting_sector_mpls_label
+        bidirectional_path, local_mpls_label, requesting_sector_mpls_label
 ):
-    entity_a_id = local_path.entity_a
-    entity_b_id = local_path.entity_b
-    switches_info = local_path.switches_info
+    entity_a_id = bidirectional_path.entity_a
+    entity_b_id = bidirectional_path.entity_b
+    switches_info = bidirectional_path.switches_info
     sector_a_entity_obj = sector.query_entity(entity_a_id)
     sector_b_entity_obj = sector.query_entity(entity_b_id)
 
     assert isinstance(sector_a_entity_obj, Sector), "sector_a_entity_obj type is not Sector"
     assert isinstance(sector_b_entity_obj, Sector), "sector_b_entity_obj type is not Sector"
+
+    assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
+    assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+    assert isinstance(requesting_sector_mpls_label, int), "requesting_sector_mpls_label is not int"
+    assert 0 <= requesting_sector_mpls_label < pow(2, 20), "requesting_sector_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
 
     if len(switches_info) == 1:
         # When there's only one switch in the path, it is only necessary to change the labels and switch the packets
@@ -137,8 +142,6 @@ def __bidirectional_mpls_flow_activation(
 
     else:
         # Multiswitch path requires an MPLS label to build a tunnel.
-        assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
-        assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
 
         #  Information about the path switches.
         #  Core switches are those who are in the middle of the path, not on the edges.
@@ -324,7 +327,7 @@ def __bidirectional_mpls_flow_activation(
         )
         ###############################
 
-    return __MPLSService(local_path, tunnel_flows, local_mpls_label)
+    return __MPLSService(bidirectional_path, tunnel_flows, local_mpls_label)
 
 
 def __unidirectional_mpls_flow_activation(
@@ -338,6 +341,12 @@ def __unidirectional_mpls_flow_activation(
 
     assert isinstance(sector_a_entity_obj, Sector), "sector_a_entity_obj type is not Sector"
     assert isinstance(sector_b_entity_obj, Sector), "sector_b_entity_obj type is not Sector"
+
+    # Multiswitch path requires an MPLS label to build a tunnel.
+    assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
+    assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+    assert isinstance(requesting_sector_mpls_label, int), "requesting_sector_mpls_label is not int"
+    assert 0 <= requesting_sector_mpls_label < pow(2, 20), "requesting_sector_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
 
     if len(switches_info) == 1:
         # When there's only one switch in the path, it is only necessary to change the labels and switch the packets
@@ -380,9 +389,6 @@ def __unidirectional_mpls_flow_activation(
             tuple(),
         )
     else:
-        # Multiswitch path requires an MPLS label to build a tunnel.
-        assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
-        assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
 
         #  Information about the path switches.
         #  Core switches are those who are in the middle of the path, not on the edges.

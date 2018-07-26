@@ -76,7 +76,7 @@ class __PeerProxy:
         try:
             self.__counter = __class__.__counter
             __class__.__counter += 1
-            _log.info("Initializing communication to peer ({:s}: {:d})".format(str(location), self.__counter))
+            _log.debug("Initializing communication to peer ({:s}: {:d})".format(str(location), self.__counter))
 
             self.__location = (str(location[0]), location[1])
             self.__stream_client = hub.StreamClient(self.__location)
@@ -198,7 +198,7 @@ def initialize_server(ip, port):
 
         try:
             while True:
-                _log.warning("Serving {:s}".format(str(client_addr)))
+                _log.debug("Serving {:s}".format(str(client_addr)))
                 # First, receive the length of the request
                 received_bytes = 0
                 buf = bytearray(2)
@@ -238,7 +238,7 @@ def initialize_server(ip, port):
                     args = request[1]
                     kwargs = request[2]
 
-                    _log.info(
+                    _log.debug(
                         "Client is requesting {:s} with data {:s}.".format(
                             func_name,
                             str((args, kwargs))
@@ -321,9 +321,16 @@ def __activate_scenario(scenario_request):
     scenario_hash_val = scenario_request['hash_val'] # hash value which identifies the switch that sends the traffic
 #    _log.debug("scenario_hash_val: {:x}".format(scenario_hash_val))
 
+    assert isinstance(scenario_mpls_label, int) and scenario_mpls_label >= 0, \
+        "scenario_mpls_label expected to be non negative  int"
+    assert isinstance(scenario_hash_val, int) and scenario_hash_val >= 0, \
+        "scenario_hash_val expected to be non negative int"
+
+
     source_controller_id = UUID(global_path_search_id[0])
     source_ipv4_str = global_path_search_id[1]
     target_ipv4_str = global_path_search_id[2]
+    target_ipv4 = IPv4Address(global_path_search_id[2])
     scenario_type = global_path_search_id[3]
     target_host_info = central.query_address_info(ipv4=target_ipv4_str)
 
@@ -406,45 +413,45 @@ def __activate_scenario(scenario_request):
                     ((id(local_service_scenario),), (sector_requesting_service_id,))
                 )
 
-                kspl = globals.get_known_shortest_path(
-                    this_controller_id,
-                    target_ipv4_str
-                )
-                if kspl and kspl > len(bidirectional_path):
-                    globals.set_known_shortest_path(
-                        this_controller_id,
-                        target_ipv4_str,
-                        len(bidirectional_path)
-                    )
-                else:
-                    globals.set_known_shortest_path(
-                        this_controller_id,
-                        target_ipv4_str,
-                        len(bidirectional_path)
-                    )
-                kspl = globals.get_known_shortest_path(
-                    this_controller_id,
-                    target_ipv4_str
-                )
-                assert kspl, "kspl cannot be Zero or None."
-
-                reward = bidirectional_path.remaining_bandwidth_average/kspl*len(bidirectional_path)
-
-                old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
-                new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
-                globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
-
-                _log.info(
-                    "Updated Q-Values -> "
-                    "Old Q-Value: {:f}; "
-                    "New Q-Value: {:f}; "
-                    "Reward: {:f}; "
-                    "Forward Q-Value: {:f}; "
-                    "KSPL: {:d};"
-                    "".format(
-                        old_q_value, new_q_value, reward, 1, kspl
-                    )
-                )
+                # kspl = globals.get_known_shortest_path(
+                #     this_controller_id,
+                #     target_ipv4_str
+                # )
+                # if kspl and kspl > len(bidirectional_path):
+                #     globals.set_known_shortest_path(
+                #         this_controller_id,
+                #         target_ipv4_str,
+                #         len(bidirectional_path)
+                #     )
+                # else:
+                #     globals.set_known_shortest_path(
+                #         this_controller_id,
+                #         target_ipv4_str,
+                #         len(bidirectional_path)
+                #     )
+                # kspl = globals.get_known_shortest_path(
+                #     this_controller_id,
+                #     target_ipv4_str
+                # )
+                # assert kspl, "kspl cannot be Zero or None."
+                #
+                # reward = bidirectional_path.remaining_bandwidth_average/kspl*len(bidirectional_path)
+                #
+                # old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                # new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
+                # globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+                #
+                # _log.info(
+                #     "Updated Q-Values -> "
+                #     "Old Q-Value: {:f}; "
+                #     "New Q-Value: {:f}; "
+                #     "Reward: {:f}; "
+                #     "Forward Q-Value: {:f}; "
+                #     "KSPL: {:d};"
+                #     "".format(
+                #         old_q_value, new_q_value, reward, 1, kspl
+                #     )
+                # )
 
                 _log.debug(
                     "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
@@ -456,8 +463,8 @@ def __activate_scenario(scenario_request):
                 return {
                     "success": True,
                     "global_path_search_id": global_path_search_id,
-                    "q_value": new_q_value,
-                    "path_length": len(bidirectional_path)
+                    "q_value": 1,
+                    "path_length": len(bidirectional_path) - 1
                 }
 
             else:
@@ -479,11 +486,8 @@ def __activate_scenario(scenario_request):
                     )
                     assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
 
-                    # Allocate MPLS label for tunnel
-                    if len(bidirectional_path) >= 3:
-                        local_mpls_label = globals.alloc_mpls_label_id()
-                    else:
-                        local_mpls_label = None
+                    # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                    local_mpls_label = globals.alloc_mpls_label_id()
 
                     (switch_id, _, port_out) = bidirectional_path.path[-2]
                     selected_sector_proxy = get_controller_proxy(target_host_info.controller_id)
@@ -505,27 +509,27 @@ def __activate_scenario(scenario_request):
                     if service_activation_result["success"]:
                         kspl = globals.get_known_shortest_path(
                             target_host_info.controller_id,
-                            target_ipv4_str
+                            target_ipv4
                         )
-                        if kspl and kspl > len(bidirectional_path) + service_activation_result["path_length"]:
+                        if kspl and kspl > service_activation_result["path_length"] + 1:
                             globals.set_known_shortest_path(
                                 target_host_info.controller_id,
-                                target_ipv4_str,
-                                len(bidirectional_path) + service_activation_result["path_length"]
+                                target_ipv4,
+                                service_activation_result["path_length"] + 1
                             )
                         else:
                             globals.set_known_shortest_path(
                                 target_host_info.controller_id,
-                                target_ipv4_str,
-                                len(bidirectional_path) + service_activation_result["path_length"]
+                                target_ipv4,
+                                service_activation_result["path_length"] + 1
                             )
                         kspl = globals.get_known_shortest_path(
                             target_host_info.controller_id,
-                            target_ipv4_str
+                            target_ipv4
                         )
                         assert kspl, "kspl cannot be Zero or None."
 
-                        reward = bidirectional_path.remaining_bandwidth_average / kspl * len(bidirectional_path)
+                        reward = bidirectional_path.remaining_bandwidth_average / kspl
 
                         old_q_value = globals.get_q_value(target_host_info.controller_id, target_ipv4_str)
                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
@@ -568,7 +572,7 @@ def __activate_scenario(scenario_request):
                             "success": True,
                             "global_path_search_id": global_path_search_id,
                             "q_value": new_q_value,
-                            "path_length": len(bidirectional_path) + service_activation_result["path_length"]
+                            "path_length": len(bidirectional_path) + service_activation_result["path_length"] - 1
                         }
                     else:
                         old_q_value = globals.get_q_value(target_host_info.controller_id, target_ipv4_str)
@@ -602,25 +606,22 @@ def __activate_scenario(scenario_request):
                 else:
                     while len(adjacent_sectors_ids):
                         _log.debug("Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids))
-                        for sector_id in adjacent_sectors_ids:
-                            if sector_id not in globals.QValues:
-                                globals.QValues[sector_id] = {}
 
                         # Selecting a Sector based on the Q-Value
                         sectors_never_used = tuple(
                             filter(
-                                (lambda sec: target_ipv4_str not in globals.QValues[sec]),
+                                (lambda sector_id: globals.get_q_value(sector_id, target_ipv4) == 0),
                                 adjacent_sectors_ids
                             )
                         )
                         if len(sectors_never_used):
                             selected_sector_id = sectors_never_used[0]
-
                         else:
                             selected_sector_id = max(
                                 adjacent_sectors_ids,
-                                key=(lambda ent: globals.QValues[ent][target_ipv4_str])
+                                key=(lambda sector_id: globals.get_q_value(sector_id, target_ipv4))
                             )
+
                         adjacent_sectors_ids.remove(selected_sector_id)
                         _log.debug(
                             "{:s} sector selected".format(
@@ -639,11 +640,8 @@ def __activate_scenario(scenario_request):
                         )
                         assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
 
-                        # Allocate MPLS label for local path
-                        if len(bidirectional_path) >= 3:
-                            local_mpls_label = globals.alloc_mpls_label_id()
-                        else:
-                            local_mpls_label = None
+                        # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                        local_mpls_label = globals.alloc_mpls_label_id()
 
                         (switch_id, _, port_out) = bidirectional_path.path[-2]
                         try:
@@ -664,27 +662,27 @@ def __activate_scenario(scenario_request):
                         if service_activation_result["success"]:
                             kspl = globals.get_known_shortest_path(
                                 selected_sector_id,
-                                target_ipv4_str
+                                target_ipv4
                             )
-                            if kspl and kspl > len(bidirectional_path) + service_activation_result["path_length"]:
+                            if kspl and kspl > service_activation_result["path_length"] + 1:
                                 globals.set_known_shortest_path(
                                     selected_sector_id,
-                                    target_ipv4_str,
-                                    len(bidirectional_path) + service_activation_result["path_length"]
+                                    target_ipv4,
+                                    service_activation_result["path_length"] + 1
                                 )
                             else:
                                 globals.set_known_shortest_path(
                                     selected_sector_id,
-                                    target_ipv4_str,
-                                    len(bidirectional_path) + service_activation_result["path_length"]
+                                    target_ipv4,
+                                    service_activation_result["path_length"] + 1
                                 )
                             kspl = globals.get_known_shortest_path(
                                 selected_sector_id,
-                                target_ipv4_str
+                                target_ipv4
                             )
                             assert kspl, "kspl cannot be Zero or None."
 
-                            reward = bidirectional_path.remaining_bandwidth_average / kspl * len(bidirectional_path)
+                            reward = bidirectional_path.remaining_bandwidth_average / kspl
                             old_q_value = globals.get_q_value(selected_sector_id, target_ipv4_str)
                             new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
                             globals.set_q_value(selected_sector_id, target_ipv4_str, new_q_value)
@@ -732,7 +730,7 @@ def __activate_scenario(scenario_request):
                                 "success": True,
                                 "global_path_search_id": global_path_search_id,
                                 "q_value": new_q_value,
-                                "path_length": len(bidirectional_path) + service_activation_result["path_length"]
+                                "path_length": len(bidirectional_path) + service_activation_result["path_length"] - 1
                             }
 
                         else:
@@ -834,45 +832,45 @@ def __activate_scenario(scenario_request):
                     ((id(local_service_scenario),), (sector_requesting_service_id,))
                 )
 
-                kspl = globals.get_known_shortest_path(
-                    this_controller_id,
-                    target_ipv4_str
-                )
-                if kspl and kspl > len(unidirectional_path):
-                        globals.set_known_shortest_path(
-                            this_controller_id,
-                            target_ipv4_str,
-                            len(unidirectional_path)
-                        )
-                else:
-                    globals.set_known_shortest_path(
-                        this_controller_id,
-                        target_ipv4_str,
-                        len(unidirectional_path)
-                    )
-                kspl = globals.get_known_shortest_path(
-                    this_controller_id,
-                    target_ipv4_str
-                )
-                assert kspl, "kspl cannot be Zero or None."
-
-                reward = unidirectional_path.remaining_bandwidth_average/kspl*len(unidirectional_path)
-
-                old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
-                new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
-                globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
-
-                _log.info(
-                    "Updated Q-Values -> "
-                    "Old Q-Value: {:f}; "
-                    "New Q-Value: {:f}; "
-                    "Reward: {:f}; "
-                    "Forward Q-Value: {:f}."
-                    "KSPL: {:d};"
-                    "".format(
-                        old_q_value, new_q_value, reward, 1, kspl
-                    )
-                )
+                # kspl = globals.get_known_shortest_path(
+                #     this_controller_id,
+                #     target_ipv4_str
+                # )
+                # if kspl and kspl > len(unidirectional_path):
+                #         globals.set_known_shortest_path(
+                #             this_controller_id,
+                #             target_ipv4_str,
+                #             len(unidirectional_path)
+                #         )
+                # else:
+                #     globals.set_known_shortest_path(
+                #         this_controller_id,
+                #         target_ipv4_str,
+                #         len(unidirectional_path)
+                #     )
+                # kspl = globals.get_known_shortest_path(
+                #     this_controller_id,
+                #     target_ipv4_str
+                # )
+                # assert kspl, "kspl cannot be Zero or None."
+                #
+                # reward = unidirectional_path.remaining_bandwidth_average/kspl*len(unidirectional_path)
+                #
+                # old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
+                # new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
+                # globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
+                #
+                # _log.info(
+                #     "Updated Q-Values -> "
+                #     "Old Q-Value: {:f}; "
+                #     "New Q-Value: {:f}; "
+                #     "Reward: {:f}; "
+                #     "Forward Q-Value: {:f}."
+                #     "KSPL: {:d};"
+                #     "".format(
+                #         old_q_value, new_q_value, reward, 1, kspl
+                #     )
+                # )
 
                 _log.info(
                     "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
@@ -884,8 +882,8 @@ def __activate_scenario(scenario_request):
                 return {
                     "success": True,
                     "global_path_search_id": global_path_search_id,
-                    "q_value": new_q_value,
-                    "path_length": len(unidirectional_path)
+                    "q_value": 1,
+                    "path_length": len(unidirectional_path) - 1
                 }
 
             else:
@@ -906,11 +904,8 @@ def __activate_scenario(scenario_request):
                     )
                     assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
 
-                    # Allocate MPLS label for tunnel
-                    if len(unidirectional_path) >= 3:
-                        local_mpls_label = globals.alloc_mpls_label_id()
-                    else:
-                        local_mpls_label = None
+                    # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                    local_mpls_label = globals.alloc_mpls_label_id()
 
                     (switch_id, _, port_out) = unidirectional_path.path[-2]
                     selected_sector_proxy = get_controller_proxy(target_host_info.controller_id)
@@ -931,27 +926,27 @@ def __activate_scenario(scenario_request):
                     if service_activation_result["success"]:
                         kspl = globals.get_known_shortest_path(
                             target_host_info.controller_id,
-                            target_ipv4_str
+                            target_ipv4
                         )
-                        if kspl and kspl > len(unidirectional_path) + service_activation_result["path_length"]:
+                        if kspl and kspl > service_activation_result["path_length"] + 1:
                                 globals.set_known_shortest_path(
                                     target_host_info.controller_id,
-                                    target_ipv4_str,
-                                    len(unidirectional_path) + service_activation_result["path_length"]
+                                    target_ipv4,
+                                    service_activation_result["path_length"] + 1
                                 )
                         else:
                             globals.set_known_shortest_path(
                                 target_host_info.controller_id,
-                                target_ipv4_str,
-                                len(unidirectional_path) + service_activation_result["path_length"]
+                                target_ipv4,
+                                service_activation_result["path_length"] + 1
                             )
                         kspl = globals.get_known_shortest_path(
                             target_host_info.controller_id,
-                            target_ipv4_str
+                            target_ipv4
                         )
                         assert kspl, "kspl cannot be Zero or None."
 
-                        reward = unidirectional_path.remaining_bandwidth_average / kspl * len(unidirectional_path)
+                        reward = unidirectional_path.remaining_bandwidth_average / kspl
 
                         old_q_value = globals.get_q_value(target_host_info.controller_id, target_ipv4_str)
                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
@@ -994,7 +989,7 @@ def __activate_scenario(scenario_request):
                             "success": True,
                             "global_path_search_id": global_path_search_id,
                             "q_value": new_q_value,
-                            "path_length": len(unidirectional_path) + service_activation_result["path_length"]
+                            "path_length": len(unidirectional_path) + service_activation_result["path_length"] - 1
                         }
 
                     else:
@@ -1014,12 +1009,12 @@ def __activate_scenario(scenario_request):
                                 old_q_value, new_q_value, -1, forward_q_value
                             )
                         )
-                        _log.error("Failed to activate Scenario with ID {:s} through sector {:s}. "
-                                   "Reason: {:s}.".format(
-                            str(target_host_info.controller_id),
-                            str(global_path_search_id),
-                            service_activation_result["reason"]
-                            ),
+                        _log.error("Failed to activate Scenario with ID {:s} through sector {:s}. Reason: {:s}."
+                                   "".format(
+                                        str(target_host_info.controller_id),
+                                        str(global_path_search_id),
+                                        service_activation_result["reason"]
+                                    ),
                         )
 
                         return {
@@ -1030,25 +1025,22 @@ def __activate_scenario(scenario_request):
                 else:
                     while len(adjacent_sectors_ids):
                         _log.debug("Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids))
-                        for sector_id in adjacent_sectors_ids:
-                            if sector_id not in globals.QValues:
-                                globals.QValues[sector_id] = {}
 
                         # Selecting a Sector based on the Q-Value
                         sectors_never_used = tuple(
                             filter(
-                                (lambda sec: target_ipv4_str not in globals.QValues[sec]),
+                                (lambda sector_id: globals.get_q_value(sector_id, target_ipv4) == 0),
                                 adjacent_sectors_ids
                             )
                         )
                         if len(sectors_never_used):
                             selected_sector_id = sectors_never_used[0]
-
                         else:
                             selected_sector_id = max(
                                 adjacent_sectors_ids,
-                                key=(lambda ent: globals.QValues[ent][target_ipv4_str])
+                                key=(lambda sector_id: globals.get_q_value(sector_id, target_ipv4))
                             )
+
                         adjacent_sectors_ids.remove(selected_sector_id)
                         _log.debug(
                             "Selected sector {:s}".format(
@@ -1066,11 +1058,8 @@ def __activate_scenario(scenario_request):
                         )
                         assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
 
-                        # Allocate MPLS label for local path
-                        if len(unidirectional_path) >= 3:
-                            local_mpls_label = globals.alloc_mpls_label_id()
-                        else:
-                            local_mpls_label = None
+                        # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                        local_mpls_label = globals.alloc_mpls_label_id()
 
                         (switch_id, _, port_out) = unidirectional_path.path[-2]
                         try:
@@ -1091,27 +1080,27 @@ def __activate_scenario(scenario_request):
                         if service_activation_result["success"]:
                             kspl = globals.get_known_shortest_path(
                                 selected_sector_id,
-                                target_ipv4_str
+                                target_ipv4
                             )
-                            if kspl and kspl > len(unidirectional_path) + service_activation_result["path_length"]:
+                            if kspl and kspl > service_activation_result["path_length"] + 1:
                                 globals.set_known_shortest_path(
                                     selected_sector_id,
-                                    target_ipv4_str,
-                                    len(unidirectional_path) + service_activation_result["path_length"]
+                                    target_ipv4,
+                                    service_activation_result["path_length"] + 1
                                 )
                             else:
                                 globals.set_known_shortest_path(
                                     selected_sector_id,
-                                    target_ipv4_str,
-                                    len(unidirectional_path) + service_activation_result["path_length"]
+                                    target_ipv4,
+                                    service_activation_result["path_length"] + 1
                                 )
                             kspl = globals.get_known_shortest_path(
                                 selected_sector_id,
-                                target_ipv4_str
+                                target_ipv4
                             )
                             assert kspl, "kspl cannot be Zero or None."
 
-                            reward = unidirectional_path.remaining_bandwidth_average / kspl * len(unidirectional_path)
+                            reward = unidirectional_path.remaining_bandwidth_average / kspl
                             old_q_value = globals.get_q_value(selected_sector_id, target_ipv4_str)
                             new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
                             globals.set_q_value(selected_sector_id, target_ipv4_str, new_q_value)
@@ -1159,7 +1148,7 @@ def __activate_scenario(scenario_request):
                                 "success": True,
                                 "global_path_search_id": global_path_search_id,
                                 "q_value": new_q_value,
-                                "path_length": len(unidirectional_path) + service_activation_result["path_length"]
+                                "path_length": len(unidirectional_path) + service_activation_result["path_length"] - 1
                             }
 
                         else:
@@ -1300,7 +1289,9 @@ def __terminate_scenario(scenario_request):
                     str(res)
                 )
             )
-
+        _log.warning(
+            "Global scenario {:s} destroyed.".format(str(global_path_search_id))
+        )
         return {"success": True, "global_path_search_id": global_path_search_id}
 
     except Exception as ex:

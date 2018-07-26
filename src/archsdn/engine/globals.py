@@ -2,6 +2,9 @@ import logging
 from archsdn.helpers import logger_module_name
 from threading import Lock
 from eventlet.semaphore import Semaphore
+from uuid import UUID
+from ipaddress import IPv4Address, IPv6Address
+
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -72,6 +75,10 @@ kspl = {}  # kspl[SectorID][IPv4/IPv6] = minimum length
 
 
 def get_known_shortest_path(sector_id, host_address):
+    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+    assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
+        "host_address expected to be IPv4Address or IPv6Address"
+
     if sector_id not in kspl:
         kspl[sector_id] = {host_address: None}
     if host_address not in kspl[sector_id]:
@@ -80,6 +87,11 @@ def get_known_shortest_path(sector_id, host_address):
 
 
 def set_known_shortest_path(sector_id, host_address, path_length):
+    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+    assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
+        "host_address expected to be IPv4Address or IPv6Address"
+    assert isinstance(path_length, int) and path_length > 0, "path_length expected to be int and > 0"
+
     if sector_id not in kspl:
         kspl[sector_id] = {host_address: path_length}
     else:
@@ -87,6 +99,10 @@ def set_known_shortest_path(sector_id, host_address, path_length):
 
 
 def get_q_value(sector_id, host_address):
+    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+    assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
+        "host_address expected to be IPv4Address or IPv6Address"
+
     if sector_id not in QValues:
         QValues[sector_id] = {host_address: 0}
     else:
@@ -95,15 +111,22 @@ def get_q_value(sector_id, host_address):
     return QValues[sector_id][host_address]
 
 
-def set_q_value(sector_id, host_address, value):
-    if sector_id not in QValues:
-        QValues[sector_id] = {host_address: value}
-    else:
-        if host_address not in QValues[sector_id]:
-            QValues[sector_id][host_address] = value
+def set_q_value(sector_id, host_address, q_value):
+    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+    assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
+        "host_address expected to be IPv4Address or IPv6Address"
+    assert isinstance(q_value, int) or isinstance(q_value, float), "q_value expected to be int or float"
 
+    if sector_id not in QValues:
+        QValues[sector_id] = {host_address: q_value}
+    else:
+        QValues[sector_id][host_address] = q_value
 
 def calculate_new_qvalue(old_value, forward_value, reward):
+    assert isinstance(old_value, int) or isinstance(old_value, float), "old_value expected to be int or float"
+    assert isinstance(forward_value, int) or isinstance(forward_value, float), "forward_value expected to be int or float"
+    assert isinstance(reward, int) or isinstance(reward, float), "reward expected to be int or float"
+
     return old_value + q_alpha * (reward + q_beta*forward_value - old_value)
 
 

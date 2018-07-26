@@ -596,11 +596,8 @@ def process_event(packet_in_event):
                                     allocated_bandwith=100
                                 )
 
-                                # Allocate MPLS label for tunnel
-                                if len(bidirectional_path) >= 3:
-                                    local_mpls_label = globals.alloc_mpls_label_id()
-                                else:
-                                    local_mpls_label = None
+                                # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                                local_mpls_label = globals.alloc_mpls_label_id()
 
                                 # Knowing which switch connects to the sector and through which port
                                 (switch_id, _, port_out) = bidirectional_path.path[-2]
@@ -654,24 +651,20 @@ def process_event(packet_in_event):
                                     _log.debug(
                                         "Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids)
                                     )
-                                    for sector_id in adjacent_sectors_ids:
-                                        if sector_id not in globals.QValues:
-                                            globals.QValues[sector_id] = {}
-
                                     sectors_never_used = tuple(
                                         filter(
-                                            (lambda sec: str(target_ipv4) not in globals.QValues[sec]),
+                                            (lambda sector_id: globals.get_q_value(sector_id, target_ipv4) == 0),
                                             adjacent_sectors_ids
                                         )
                                     )
                                     if len(sectors_never_used):
                                         selected_sector_id = sectors_never_used[0]
-
                                     else:
                                         selected_sector_id = max(
                                             adjacent_sectors_ids,
-                                            key=(lambda ent: globals.QValues[ent][str(target_ipv4)])
+                                            key=(lambda sector_id: globals.get_q_value(sector_id, target_ipv4))
                                         )
+
                                     adjacent_sectors_ids.remove(selected_sector_id)
                                     _log.debug(
                                         "{:s} sector selected".format(
@@ -687,11 +680,9 @@ def process_event(packet_in_event):
                                     )
 
                                     assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
-                                    # Allocate MPLS label for tunnel
-                                    if len(bidirectional_path) >= 3:
-                                        local_mpls_label = globals.alloc_mpls_label_id()
-                                    else:
-                                        local_mpls_label = None
+
+                                    # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                                    local_mpls_label = globals.alloc_mpls_label_id()
 
                                     (switch_id, _, port_out) = bidirectional_path.path[-2]
                                     selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
@@ -716,18 +707,17 @@ def process_event(packet_in_event):
                                             selected_sector_id,
                                             pkt_ipv4_dst
                                         )
-                                        if kspl and kspl > len(bidirectional_path) + service_activation_result[
-                                            "path_length"]:
+                                        if kspl and kspl > service_activation_result["path_length"] + 1:
                                             globals.set_known_shortest_path(
                                                 selected_sector_id,
                                                 pkt_ipv4_dst,
-                                                len(bidirectional_path) + service_activation_result["path_length"]
+                                                service_activation_result["path_length"] + 1
                                             )
                                         else:
                                             globals.set_known_shortest_path(
                                                 selected_sector_id,
                                                 pkt_ipv4_dst,
-                                                len(bidirectional_path) + service_activation_result["path_length"]
+                                                service_activation_result["path_length"] + 1
                                             )
                                         # Update kspl value since it may have been changed.
                                         kspl = globals.get_known_shortest_path(
@@ -736,8 +726,7 @@ def process_event(packet_in_event):
                                         )
                                         assert kspl, "kspl cannot be Zero or None."
 
-                                        reward = bidirectional_path.remaining_bandwidth_average / kspl * \
-                                            len(bidirectional_path)
+                                        reward = bidirectional_path.remaining_bandwidth_average / kspl
 
                                         old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
                                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
@@ -781,6 +770,7 @@ def process_event(packet_in_event):
                                                 len(bidirectional_path)
                                             )
                                         )
+                                        break
 
                                     else:
                                         old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
@@ -1094,11 +1084,8 @@ def process_event(packet_in_event):
                                     target_sector_id,
                                 )
 
-                                # Allocate MPLS label for tunnel
-                                if len(unidirectional_path) >= 3:
-                                    local_mpls_label = globals.alloc_mpls_label_id()
-                                else:
-                                    local_mpls_label = None
+                                # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                                local_mpls_label = globals.alloc_mpls_label_id()
 
                                 # Knowing which switch connects to the sector and through which port
                                 (switch_id, _, port_out) = unidirectional_path.path[-2]
@@ -1118,29 +1105,27 @@ def process_event(packet_in_event):
                                 if service_activation_result["success"]:
                                     kspl = globals.get_known_shortest_path(
                                         target_host_info.controller_id,
-                                        target_ipv4_str
+                                        target_ipv4
                                     )
-                                    if kspl and kspl > len(unidirectional_path) + service_activation_result[
-                                        "path_length"]:
+                                    if kspl and kspl > service_activation_result["path_length"] + 1:
                                         globals.set_known_shortest_path(
                                             target_host_info.controller_id,
-                                            target_ipv4_str,
-                                            len(unidirectional_path) + service_activation_result["path_length"]
+                                            target_ipv4,
+                                            service_activation_result["path_length"] + 1
                                         )
                                     else:
                                         globals.set_known_shortest_path(
                                             target_host_info.controller_id,
-                                            target_ipv4_str,
-                                            len(unidirectional_path) + service_activation_result["path_length"]
+                                            target_ipv4,
+                                            service_activation_result["path_length"] + 1
                                         )
                                     kspl = globals.get_known_shortest_path(
                                         target_host_info.controller_id,
-                                        target_ipv4_str
+                                        target_ipv4
                                     )
                                     assert kspl, "kspl cannot be Zero or None."
 
-                                    reward = unidirectional_path.remaining_bandwidth_average / kspl * len(
-                                        unidirectional_path)
+                                    reward = unidirectional_path.remaining_bandwidth_average / kspl
 
                                     old_q_value = globals.get_q_value(target_host_info.controller_id, target_ipv4_str)
                                     new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
@@ -1214,24 +1199,20 @@ def process_event(packet_in_event):
                                     _log.debug(
                                         "Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids)
                                     )
-                                    for sector_id in adjacent_sectors_ids:
-                                        if sector_id not in globals.QValues:
-                                            globals.QValues[sector_id] = {}
-
                                     sectors_never_used = tuple(
                                         filter(
-                                            (lambda sec: str(target_ipv4) not in globals.QValues[sec]),
+                                            (lambda sector_id: globals.get_q_value(sector_id, target_ipv4) == 0),
                                             adjacent_sectors_ids
                                         )
                                     )
                                     if len(sectors_never_used):
                                         selected_sector_id = sectors_never_used[0]
-
                                     else:
                                         selected_sector_id = max(
                                             adjacent_sectors_ids,
-                                            key=(lambda ent: globals.QValues[ent][str(target_ipv4)])
+                                            key=(lambda sector_id: globals.get_q_value(sector_id, target_ipv4))
                                         )
+
                                     adjacent_sectors_ids.remove(selected_sector_id)
                                     _log.debug(
                                         "{:s} sector selected".format(
@@ -1246,11 +1227,9 @@ def process_event(packet_in_event):
                                     )
 
                                     assert len(unidirectional_path), "bidirectional_path path length cannot be zero."
-                                    # Allocate MPLS label for tunnel
-                                    if len(unidirectional_path) >= 3:
-                                        local_mpls_label = globals.alloc_mpls_label_id()
-                                    else:
-                                        local_mpls_label = None
+
+                                    # Allocate MPLS label for tunnel (required when communicating with Sectors)
+                                    local_mpls_label = globals.alloc_mpls_label_id()
 
                                     (switch_id, _, port_out) = unidirectional_path.path[-2]
                                     selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
@@ -1275,18 +1254,17 @@ def process_event(packet_in_event):
                                             selected_sector_id,
                                             pkt_ipv4_dst
                                         )
-                                        if kspl and kspl > len(unidirectional_path) + service_activation_result[
-                                            "path_length"]:
+                                        if kspl and kspl > service_activation_result["path_length"] + 1:
                                             globals.set_known_shortest_path(
                                                 selected_sector_id,
                                                 pkt_ipv4_dst,
-                                                len(unidirectional_path)
+                                                service_activation_result["path_length"] + 1
                                             )
                                         else:
                                             globals.set_known_shortest_path(
                                                 selected_sector_id,
                                                 pkt_ipv4_dst,
-                                                len(unidirectional_path) + service_activation_result["path_length"]
+                                                service_activation_result["path_length"] + 1
                                             )
                                         # Update kspl value since it may have been changed.
                                         kspl = globals.get_known_shortest_path(
@@ -1295,8 +1273,7 @@ def process_event(packet_in_event):
                                         )
                                         assert kspl, "kspl cannot be Zero or None."
 
-                                        reward = unidirectional_path.remaining_bandwidth_average / kspl * \
-                                                 len(unidirectional_path)
+                                        reward = unidirectional_path.remaining_bandwidth_average / kspl
 
                                         old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
                                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
@@ -1341,6 +1318,7 @@ def process_event(packet_in_event):
                                                 len(unidirectional_path)
                                             )
                                         )
+                                        break
 
                                     else:
                                         old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
