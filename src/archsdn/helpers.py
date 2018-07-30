@@ -93,12 +93,9 @@ def __detailed_trace(ex_type, ex_value, ex_tb):
 
 
 def custom_logging_callback(logBook, level, ex_type, ex_value, ex_tb):
-    if level == "DEBUG:":
-        result = __detailed_trace(ex_type, ex_value, ex_tb)
-        result = ["\n"] + result
-        logBook.log(level, "\n".join(result))
-    else:
-        logBook.log(level, "{:s}".format(str(ex_value)))
+    result = __detailed_trace(ex_type, ex_value, ex_tb)
+    result = ["\n"] + result
+    logBook.log(level, "\n".join(result))
 
     if ex_type is AssertionError:
         sys.exit("Assertion Failure: {:s}".format(str(ex_value)))
