@@ -209,7 +209,11 @@ def initialize_server(ip, port):
                         received_bytes += len(data_bytes)
                     else:
                         return
-                    # _log.debug("need_to_receive: {:d} data_bytes received: {:d};".format(2-received_bytes, len(data_bytes)))
+                    # _log.debug(
+                    #     "need_to_receive: {:d} data_bytes received: {:d};".format(
+                    #         2-received_bytes, len(data_bytes)
+                    #     )
+                    # )
                 msg_len = struct.unpack("!H", buf)[0]
 
                 # Then, receive the encoded request
@@ -282,8 +286,6 @@ def initialize_server(ip, port):
 
 def shutdown_server():
     _server_stream.server.close()
-    #_clients_context.destroy()
-    pass
 
 
 def __req_local_time(*args, **kwargs):
@@ -326,7 +328,6 @@ def __activate_scenario(scenario_request):
     assert isinstance(scenario_hash_val, int) and scenario_hash_val >= 0, \
         "scenario_hash_val expected to be non negative int"
 
-
     source_controller_id = UUID(global_path_search_id[0])
     source_ipv4_str = global_path_search_id[1]
     target_ipv4_str = global_path_search_id[2]
@@ -336,32 +337,6 @@ def __activate_scenario(scenario_request):
 
     this_controller_id = database.get_database_info()['uuid']
 
-    # _log.debug(
-    #     "__activate_scenario\n"
-    #     "  global_path_search_id: {:s}\n"
-    #     "  sector_requesting_service_id: {:s}\n"
-    #     "  scenario_mpls_label: {:d}\n"
-    #     "  scenario_hash_val: {:x}\n"
-    #     "  source_controller_id: {:s}\n"
-    #     "  source_ipv4_str: {:s}\n"
-    #     "  target_ipv4_str: {:s}\n"
-    #     "  scenario_type: {:s}\n"
-    #     "  target_host_info: {:s}\n"
-    #     "  this_controller_id: {:s}\n".format(
-    #         str(global_path_search_id),
-    #         str(sector_requesting_service_id),
-    #         scenario_mpls_label,
-    #         scenario_hash_val,
-    #         str(source_controller_id),
-    #         str(source_ipv4_str),
-    #         str(target_ipv4_str),
-    #         scenario_type,
-    #         str(target_host_info),
-    #         str(this_controller_id)
-    #     )
-    # )
-
-    assert isinstance(this_controller_id, UUID), "this_controller_id expected to be UUID."
     assert isinstance(scenario_type, str), "scenario_type expected to be str"
 
     if source_controller_id == this_controller_id:
@@ -391,9 +366,9 @@ def __activate_scenario(scenario_request):
                     previous_sector_hash=scenario_hash_val  # hash value which identifies the switch that sends the traffic
                 )
                 # Implementation notes:
-                #  'sector_a_hash_val' is necessary for the sector controller. In the use-case where multiple switches
-                #   are connected to the same sector, the controller from that sector uses the 'sector_a_hash_val' to
-                #   distinguish between switches. The 'sector_a_hash_val' is sent in each discovery beacon, and stored
+                #  'scenario_hash_val' is necessary for the sector controller. In the use-case where multiple switches
+                #   are connected to the same sector, the controller from that sector uses the 'scenario_hash_val' to
+                #   distinguish between switches. The 'scenario_hash_val' is sent in each discovery beacon, and stored
                 #   by the controller which receives them.
 
                 assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
@@ -412,46 +387,6 @@ def __activate_scenario(scenario_request):
                     global_path_search_id,
                     ((id(local_service_scenario),), (sector_requesting_service_id,))
                 )
-
-                # kspl = globals.get_known_shortest_path(
-                #     this_controller_id,
-                #     target_ipv4_str
-                # )
-                # if kspl and kspl > len(bidirectional_path):
-                #     globals.set_known_shortest_path(
-                #         this_controller_id,
-                #         target_ipv4_str,
-                #         len(bidirectional_path)
-                #     )
-                # else:
-                #     globals.set_known_shortest_path(
-                #         this_controller_id,
-                #         target_ipv4_str,
-                #         len(bidirectional_path)
-                #     )
-                # kspl = globals.get_known_shortest_path(
-                #     this_controller_id,
-                #     target_ipv4_str
-                # )
-                # assert kspl, "kspl cannot be Zero or None."
-                #
-                # reward = bidirectional_path.remaining_bandwidth_average/kspl*len(bidirectional_path)
-                #
-                # old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
-                # new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
-                # globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
-                #
-                # _log.info(
-                #     "Updated Q-Values -> "
-                #     "Old Q-Value: {:f}; "
-                #     "New Q-Value: {:f}; "
-                #     "Reward: {:f}; "
-                #     "Forward Q-Value: {:f}; "
-                #     "KSPL: {:d};"
-                #     "".format(
-                #         old_q_value, new_q_value, reward, 1, kspl
-                #     )
-                # )
 
                 _log.debug(
                     "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
@@ -621,12 +556,13 @@ def __activate_scenario(scenario_request):
                                 old_q_value, new_q_value, -1, forward_q_value
                             )
                         )
-                        _log.debug("Failed to activate Scenario with ID {:s} through sector {:s}. "
-                                   "Reason: {:s}.".format(
-                                        str(target_host_info.controller_id),
-                                        str(global_path_search_id),
-                                        service_activation_result["reason"]
-                                    ),
+                        _log.debug(
+                            "Failed to activate Scenario with ID {:s} through sector {:s}. Reason: {:s}."
+                            "".format(
+                                str(target_host_info.controller_id),
+                                str(global_path_search_id),
+                                service_activation_result["reason"]
+                            ),
                         )
 
                         return {
@@ -849,7 +785,7 @@ def __activate_scenario(scenario_request):
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
             return {"success": False, "reason": error_str}
 
-    elif scenario_type == 'IPv4':
+    elif scenario_type == 'IPv4': #  Handling IPv4 Generic Scenarios
         try:
             # Maintain an active token during the duration of this task. When the task is terminated, the token will
             #   be removed.
@@ -886,46 +822,6 @@ def __activate_scenario(scenario_request):
                     global_path_search_id,
                     ((id(local_service_scenario),), (sector_requesting_service_id,))
                 )
-
-                # kspl = globals.get_known_shortest_path(
-                #     this_controller_id,
-                #     target_ipv4_str
-                # )
-                # if kspl and kspl > len(unidirectional_path):
-                #         globals.set_known_shortest_path(
-                #             this_controller_id,
-                #             target_ipv4_str,
-                #             len(unidirectional_path)
-                #         )
-                # else:
-                #     globals.set_known_shortest_path(
-                #         this_controller_id,
-                #         target_ipv4_str,
-                #         len(unidirectional_path)
-                #     )
-                # kspl = globals.get_known_shortest_path(
-                #     this_controller_id,
-                #     target_ipv4_str
-                # )
-                # assert kspl, "kspl cannot be Zero or None."
-                #
-                # reward = unidirectional_path.remaining_bandwidth_average/kspl*len(unidirectional_path)
-                #
-                # old_q_value = globals.get_q_value(this_controller_id, target_ipv4_str)
-                # new_q_value = globals.calculate_new_qvalue(old_q_value, 1, reward)
-                # globals.set_q_value(this_controller_id, target_ipv4_str, new_q_value)
-                #
-                # _log.info(
-                #     "Updated Q-Values -> "
-                #     "Old Q-Value: {:f}; "
-                #     "New Q-Value: {:f}; "
-                #     "Reward: {:f}; "
-                #     "Forward Q-Value: {:f}."
-                #     "KSPL: {:d};"
-                #     "".format(
-                #         old_q_value, new_q_value, reward, 1, kspl
-                #     )
-                # )
 
                 _log.info(
                     "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
