@@ -2,14 +2,13 @@
 import sys
 import logging
 from ipaddress import IPv4Address
-from uuid import UUID
 import time
 
 from scapy.packet import Raw
 from scapy.layers.l2 import Ether, ARP
-from scapy.layers.inet import IP, UDP, ICMP
+from scapy.layers.inet import IP, ICMP
 from scapy.layers.dhcp import DHCP
-from scapy.layers.dns import DNSRR, DNS, DNSQR
+from scapy.layers.dns import DNS
 
 from ryu.lib import hub
 from netaddr import EUI
@@ -26,6 +25,7 @@ from archsdn.engine.exceptions import PathNotFound
 from archsdn.engine.datapath_events.packet_in_events.archsdn_L2 import process_archsdn_control
 from archsdn.engine.datapath_events.packet_in_events.arp import process_arp
 from archsdn.engine.datapath_events.packet_in_events.dhcp import process_dhcp_packet
+from archsdn.engine.datapath_events.packet_in_events.dns import process_dns_packet
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -604,108 +604,8 @@ def process_event(packet_in_event):
 
                 _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
 
-        elif ip_layer.haslayer(DNS):  # DNS service management
-            datapath_obj = msg.datapath
-            udp_layer = pkt[UDP]
-            dns_layer = pkt[DNS]
-            DNSQR_layer = pkt[DNSQR]
-
-            _log.debug("Received DNS Packet - Summary: {:s}".format(dns_layer.mysummary()))
-            qname_split = DNSQR_layer.qname.decode().split(".")[:-1]
-            if len(qname_split) == 3 and qname_split[-1] == "archsdn":
-                try:
-                    query_client_id = int(qname_split[0])
-                except ValueError as ve:
-                    raise ValueError("DNS Query malformed. Client ID invalid.")
-
-                if "-" in qname_split[1]:
-                    try:
-                        query_controller_uuid = UUID(qname_split[1])
-                    except ValueError:
-                        raise ValueError("DNS Query malformed. Controller ID invalid.")
-                elif str.isalnum(qname_split[1]):
-                    try:
-                        query_controller_uuid = UUID(int=int(qname_split[1]))
-                    except ValueError:
-                        try:
-                            query_controller_uuid = UUID(int=int(qname_split[1], 16))
-                        except ValueError:
-                            raise ValueError("DNS Query malformed. Controller ID invalid.")
-                else:
-                    raise ValueError("DNS Query malformed. Controller ID invalid")
-
-                # Query Central for Destination IP
-                # Return to client the IP
-                _log.info(
-                    "DNS Query request for Client {:d} at Sector {:s}".format(
-                        query_client_id,
-                        str(query_controller_uuid),
-                    )
-                )
-                if controller_uuid == query_controller_uuid:  # If the client is part of this sector
-                    try:
-                        client_info = database.query_client_info(query_client_id)
-                        dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                                    / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                                    / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-                                    / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='ok',
-                                          an=DNSRR(rrname=DNSQR_layer.qname, rdata=str(client_info["ipv4"]))
-                                          )
-                        _log.info(
-                            "Client {:d} at Sector {:s} record found locally!: {:s}".format(
-                                query_client_id,
-                                str(query_controller_uuid),
-                                str(client_info)
-                            )
-                        )
-                    except database.ClientNotRegistered:
-                        dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                                    / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                                    / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-                                    / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='name-error')
-                        _log.error(
-                            "Client {:d} at Sector {:s} record does not exist".format(
-                                query_client_id,
-                                str(query_controller_uuid),
-                            )
-                        )
-                else:  # If the client is part of a foreign sector
-                    try:
-                        client_info = central.query_client_info(query_controller_uuid, query_client_id)
-                        dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                            / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                            / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-                            / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='ok',
-                                  an=DNSRR(rrname=DNSQR_layer.qname, rdata=str(client_info.ipv4))
-                                  )
-                        _log.info(
-                            "Client {:d} at Sector {:s} record found at central management!: {:s}".format(
-                                query_client_id,
-                                str(query_controller_uuid),
-                                str(client_info)
-                            )
-                        )
-                    except central.ClientNotRegistered:
-                        dns_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                                    / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                                    / UDP(dport=udp_layer.sport, sport=udp_layer.dport) \
-                                    / DNS(id=dns_layer.id, qr=1, aa=1, qd=dns_layer.qd, rcode='name-error')
-                        _log.error(
-                            "Client {:d} at Sector {:s} record does not exist".format(
-                                query_client_id,
-                                str(query_controller_uuid),
-                            )
-                        )
-
-                datapath_obj.send_msg(
-                    datapath_ofp_parser.OFPPacketOut(
-                        datapath=msg.datapath,
-                        buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                        in_port=datapath_ofp.OFPP_CONTROLLER,
-                        actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(dns_reply))],
-                        data=bytes(dns_reply)
-                    )
-                )
+        elif ip_layer.haslayer(DNS):
+            process_dns_packet(packet_in_event)
 
         elif ip_layer.haslayer(IP):  # Generic IPv4 service management
 
