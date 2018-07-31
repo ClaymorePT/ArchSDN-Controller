@@ -588,30 +588,91 @@ def process_event(packet_in_event):
                                 raise PathNotFound("No adjacent sectors available.")
 
                             if target_sector_id in adjacent_sectors_ids:
-                                # If the target sector IS adjacent to this sector, contact it directly and establish
-                                #  a path
-                                bidirectional_path = sector.construct_bidirectional_path(
-                                    host_a_entity_id,
-                                    target_sector_id,
-                                    allocated_bandwith=100
-                                )
+                                # The possible communication links to the target sector
+                                possible_links = sector.query_edges_to_sector(target_host_info.controller_id)
+                                selected_link = tuple()
+                                bidirectional_path = tuple()
+
+                                while possible_links:
+                                    # First, lets choose a link to the adjacent sector, according to the q-value
+                                    links_never_used = tuple(
+                                        filter(
+                                            (lambda link: globals.get_q_value((link[0], link[1]), target_ipv4) == 0),
+                                            possible_links
+                                        )
+                                    )
+                                    if len(links_never_used):
+                                        selected_link = links_never_used[0]
+                                    else:
+                                        selected_link = max(
+                                            possible_links,
+                                            key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
+                                        )
+                                    try:
+                                        # If the target sector IS adjacent to this sector, contact it directly
+                                        # and establish a path
+                                        bidirectional_path = sector.construct_bidirectional_path(
+                                            host_a_entity_id,
+                                            target_sector_id,
+                                            allocated_bandwith=100,
+                                            next_sector_hash=selected_link[2]
+                                        )
+                                        break
+                                    except PathNotFound:
+                                        possible_links.remove(selected_link)
+                                        if len(possible_links) == 0:
+                                            raise
+
+                                assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
+                                assert isinstance(selected_link, tuple), "selected_link expected to be tuple"
 
                                 # Allocate MPLS label for tunnel (required when communicating with Sectors)
                                 local_mpls_label = globals.alloc_mpls_label_id()
 
                                 # Knowing which switch connects to the sector and through which port
-                                (switch_id, _, port_out) = bidirectional_path.path[-2]
+                                chosen_edge = (selected_link[0], selected_link[1])
                                 selected_sector_proxy = p2p_requests.get_controller_proxy(target_sector_id)
                                 service_activation_result = selected_sector_proxy.activate_scenario(
                                     {
                                         "global_path_search_id": global_path_search_id,
                                         "sector_requesting_service": str(controller_uuid),
                                         "mpls_label": local_mpls_label,
-                                        "hash_val": globals.get_hash_val(switch_id, port_out),
+                                        "hash_val": globals.get_hash_val(*chosen_edge),
                                     }
                                 )
 
+                                forward_q_value = 0 if "q_value" not in service_activation_result else \
+                                service_activation_result["q_value"]
+
                                 if service_activation_result["success"]:
+                                    kspl = globals.get_known_shortest_path(
+                                        chosen_edge,
+                                        target_ipv4
+                                    )
+                                    if kspl and kspl > service_activation_result["path_length"] + 1:
+                                        globals.set_known_shortest_path(
+                                            chosen_edge,
+                                            target_ipv4,
+                                            service_activation_result["path_length"] + 1
+                                        )
+                                    else:
+                                        globals.set_known_shortest_path(
+                                            chosen_edge,
+                                            target_ipv4,
+                                            service_activation_result["path_length"] + 1
+                                        )
+                                    kspl = globals.get_known_shortest_path(
+                                        chosen_edge,
+                                        target_ipv4
+                                    )
+                                    assert kspl, "kspl cannot be Zero or None."
+
+                                    reward = bidirectional_path.remaining_bandwidth_average / kspl
+
+                                    old_q_value = globals.get_q_value(chosen_edge, target_ipv4)
+                                    new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
+                                    globals.set_q_value(chosen_edge, target_ipv4, new_q_value)
+
                                     local_service_scenario = services.icmpv4_flow_activation(
                                         bidirectional_path,
                                         local_mpls_label,
@@ -626,18 +687,38 @@ def process_event(packet_in_event):
                                     )
 
                                     _log.info(
-                                        "ICMPv4 Scenario with ID {:s} is now active. "
-                                        "Implemented in {:f} seconds. "
-                                        "Global Path has length {:d}. "
-                                        "Local Path has length {:d}. "
+                                        "Adjacent Sector: {:s}; "
+                                        "Chosen link: {:s}; "
+                                        "Updated Q-Values -> "
+                                        "Old Q-Value: {:f}; "
+                                        "New Q-Value: {:f}; "
+                                        "Reward: {:f}; "
+                                        "Forward Q-Value: {:f}."
+                                        "KSPL: {:d};"
                                         "".format(
-                                            str(global_path_search_id),
-                                            time.time() - start_time,
-                                            len(bidirectional_path) + service_activation_result["path_length"],
-                                            len(bidirectional_path)
+                                            str(target_sector_id), str(chosen_edge),
+                                            old_q_value, new_q_value, reward, forward_q_value, kspl
                                         )
                                     )
                                 else:
+                                    old_q_value = globals.get_q_value(chosen_edge, target_ipv4)
+                                    new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
+                                    globals.set_q_value(chosen_edge, target_ipv4, new_q_value)
+
+                                    _log.info(
+                                        "Adjacent Sector: {:s}; "
+                                        "Chosen link: {:s}; "
+                                        "Updated Q-Values -> "
+                                        "Old Q-Value: {:f}; "
+                                        "New Q-Value: {:f}; "
+                                        "Reward: {:f}; "
+                                        "Forward Q-Value: {:f}."
+                                        "".format(
+                                            str(target_sector_id), str(chosen_edge),
+                                            old_q_value, new_q_value, -1, forward_q_value
+                                        )
+                                    )
+
                                     _log.error(
                                         "Cannot establish an ICMPv4 path to sector {:s}.".format(
                                             str(target_sector_id)
@@ -645,54 +726,72 @@ def process_event(packet_in_event):
                                     )
 
                             else:
-                                # If the target sector IS NOT adjacent to this sector, lets select the best adjacent
-                                #   sector used in the past...
-                                while len(adjacent_sectors_ids):
-                                    _log.debug(
-                                        "Available adjacent sectors for exploration: {}".format(adjacent_sectors_ids)
-                                    )
-                                    sectors_never_used = tuple(
-                                        filter(
-                                            (lambda sector_id: globals.get_q_value(sector_id, target_ipv4) == 0),
-                                            adjacent_sectors_ids
-                                        )
-                                    )
-                                    if len(sectors_never_used):
-                                        selected_sector_id = sectors_never_used[0]
-                                    else:
-                                        selected_sector_id = max(
-                                            adjacent_sectors_ids,
-                                            key=(lambda sector_id: globals.get_q_value(sector_id, target_ipv4))
-                                        )
+                                # The possible communication links to the target sector
+                                possible_links = []
+                                for adjacent_sector in adjacent_sectors_ids:
+                                    for edge in sector.query_edges_to_sector(adjacent_sector):
+                                        possible_links.append((edge[0], edge[1], edge[2], adjacent_sector))
 
-                                    adjacent_sectors_ids.remove(selected_sector_id)
-                                    _log.debug(
-                                        "{:s} sector selected".format(
-                                            str(selected_sector_id),
-                                            " from {}.".format(adjacent_sectors_ids) if len(
-                                                adjacent_sectors_ids) else "."
+                                _log.debug(
+                                    "Available Sector Links for exploration: [{:s}]".format(
+                                        "][".join(tuple((str(i) for i in possible_links)))
+                                    )
+                                )
+
+                                while possible_links:
+                                    # First, lets choose a link to the adjacent sector, according to the q-value
+                                    links_never_used = tuple(
+                                        filter(
+                                            (lambda link: globals.get_q_value(
+                                                (link[0], link[1]), target_ipv4
+                                            ) == 0),
+                                            possible_links
                                         )
                                     )
-                                    bidirectional_path = sector.construct_bidirectional_path(
-                                        host_a_entity_id,
-                                        selected_sector_id,
-                                        allocated_bandwith=100
+                                    if len(links_never_used):
+                                        selected_link = links_never_used[0]
+                                    else:
+                                        selected_link = max(
+                                            possible_links,
+                                            key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
+                                        )
+                                    possible_links.remove(selected_link)
+
+                                    chosen_edge = selected_link[0:2]
+                                    selected_sector_id = selected_link[3]
+
+                                    _log.debug(
+                                        "Selected Link {:s}{:s}".format(
+                                            str(selected_link),
+                                            " from {}.".format(possible_links) if len(possible_links) else "."
+                                        )
                                     )
+                                    try:
+                                        bidirectional_path = sector.construct_bidirectional_path(
+                                            host_a_entity_id,
+                                            selected_sector_id,
+                                            allocated_bandwith=100,
+                                            next_sector_hash=selected_link[2]
+                                        )
+                                    except PathNotFound:
+                                        if len(possible_links) == 0:
+                                            raise
+                                        continue  # Go back to the beginning of the cycle and try again with a new link
 
                                     assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
+                                    assert isinstance(selected_link, tuple), "selected_link expected to be tuple"
+                                    assert selected_sector_id is not None, "selected_sector_id cannot be None"
 
                                     # Allocate MPLS label for tunnel (required when communicating with Sectors)
                                     local_mpls_label = globals.alloc_mpls_label_id()
-
-                                    (switch_id, _, port_out) = bidirectional_path.path[-2]
-                                    selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
                                     try:
+                                        selected_sector_proxy = p2p_requests.get_controller_proxy(selected_sector_id)
                                         service_activation_result = selected_sector_proxy.activate_scenario(
                                             {
                                                 "global_path_search_id": global_path_search_id,
                                                 "sector_requesting_service": str(controller_uuid),
                                                 "mpls_label": local_mpls_label,
-                                                "hash_val": globals.get_hash_val(switch_id, port_out),
+                                                "hash_val": globals.get_hash_val(*chosen_edge),
 
                                             }
                                         )
@@ -704,43 +803,43 @@ def process_event(packet_in_event):
 
                                     if service_activation_result["success"]:
                                         kspl = globals.get_known_shortest_path(
-                                            selected_sector_id,
+                                            chosen_edge,
                                             pkt_ipv4_dst
                                         )
                                         if kspl and kspl > service_activation_result["path_length"] + 1:
                                             globals.set_known_shortest_path(
-                                                selected_sector_id,
+                                                chosen_edge,
                                                 pkt_ipv4_dst,
                                                 service_activation_result["path_length"] + 1
                                             )
                                         else:
                                             globals.set_known_shortest_path(
-                                                selected_sector_id,
+                                                chosen_edge,
                                                 pkt_ipv4_dst,
                                                 service_activation_result["path_length"] + 1
                                             )
                                         # Update kspl value since it may have been changed.
                                         kspl = globals.get_known_shortest_path(
-                                            selected_sector_id,
+                                            chosen_edge,
                                             pkt_ipv4_dst
                                         )
                                         assert kspl, "kspl cannot be Zero or None."
 
                                         reward = bidirectional_path.remaining_bandwidth_average / kspl
 
-                                        old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
+                                        old_q_value = globals.get_q_value(chosen_edge, pkt_ipv4_dst)
                                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                                        globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
+                                        globals.set_q_value(chosen_edge, pkt_ipv4_dst, new_q_value)
 
                                         _log.info(
-                                            "Selected Sector: {:s}; "
+                                            "Chosen link: {:s}; "
                                             "Old Q-Value: {:f}; "
                                             "New Q-Value: {:f}; "
                                             "Reward: {:f}; "
                                             "Forward Q-Value: {:f}."
                                             "KSPL: {:d}."
                                             "".format(
-                                                str(selected_sector_id),
+                                                str(selected_link),
                                                 old_q_value, new_q_value, reward, forward_q_value, kspl
                                             )
                                         )
@@ -773,18 +872,19 @@ def process_event(packet_in_event):
                                         break
 
                                     else:
-                                        old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
+                                        old_q_value = globals.get_q_value(chosen_edge, pkt_ipv4_dst)
                                         new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                                        globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
+                                        globals.set_q_value(chosen_edge, pkt_ipv4_dst, new_q_value)
 
                                         _log.info(
-                                            "Selected Sector: {:s}; "
+                                            "Chosen link: {:s}; "
                                             "Old Q-Value: {:f}; "
                                             "New Q-Value: {:f}; "
                                             "Reward: {:f}; "
                                             "Forward Q-Value: {:f}."
                                             "".format(
-                                                str(selected_sector_id), old_q_value, new_q_value, -1, forward_q_value
+                                                str(chosen_edge),
+                                                old_q_value, new_q_value, -1, forward_q_value
                                             )
                                         )
 

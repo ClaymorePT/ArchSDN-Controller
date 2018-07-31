@@ -710,6 +710,22 @@ def query_sectors_ids():
         return set(filter((lambda ent_id: ent_id in __entities[Sector]), __net.nodes()))
 
 
+def query_edges_to_sector(sector_id):
+    with __lock:
+        sector_id_obj = query_entity(sector_id)
+        if not isinstance(sector_id_obj, Sector):
+            raise TypeError("sector_id must reference a registered Sector")
+
+        edges = []
+
+        for switch_id in __net[sector_id]:
+            for port_in in __net[sector_id][switch_id]:
+                link_data = __net[sector_id][switch_id][port_in]['data']
+                edges.append((switch_id, port_in, link_data["hash_val"]))
+
+        return edges
+
+
 def query_address_host(ipv4=None, ipv6=None):
     assert not ((ipv4 is None) and (ipv6 is None)), "ipv4 and ipv6 cannot be null at the same time"
     assert isinstance(ipv4, IPv4Address) or ipv4 is None, "ipv4 is invalid"
@@ -848,7 +864,8 @@ def construct_unidirectional_path(
         origin_id,
         target_id,
         allocated_bandwith=None,
-        foreign_sector_hash_val=None,
+        previous_sector_hash=None,
+        next_sector_hash=None,
 ):
     try:
         with __lock:
@@ -862,11 +879,11 @@ def construct_unidirectional_path(
             net_cpy = __net.copy()
 
             # If hash values are provided
-            if isinstance(query_entity(origin_id), Sector) and foreign_sector_hash_val is not None:
+            if isinstance(query_entity(origin_id), Sector) and previous_sector_hash is not None:
                 remove_links = []
                 for dst_id in net_cpy[origin_id]:
                     for port_id in net_cpy[origin_id][dst_id]:
-                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != foreign_sector_hash_val:
+                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != previous_sector_hash:
                             remove_links.append((dst_id, port_id))
 
                 for (dst_id, port_id) in remove_links:
@@ -874,6 +891,19 @@ def construct_unidirectional_path(
                     __log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
                     net_cpy.remove_edge(dst_id, origin_id, port_id)
                     __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
+
+            if isinstance(query_entity(target_id), Sector) and next_sector_hash is not None:
+                remove_links = []
+                for switch_id in net_cpy[target_id]:
+                    for port_id in net_cpy[target_id][switch_id]:
+                        if net_cpy[target_id][switch_id][port_id]['data']['hash_val'] != next_sector_hash:
+                            remove_links.append((switch_id, port_id))
+
+                for (switch_id, port_id) in remove_links:
+                    net_cpy.remove_edge(target_id, switch_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((target_id, switch_id, port_id))))
+                    net_cpy.remove_edge(switch_id, target_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((switch_id, target_id, port_id))))
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
@@ -1028,7 +1058,8 @@ def construct_bidirectional_path(
         origin_id,
         target_id,
         allocated_bandwith=None,
-        foreign_sector_hash_val=None,
+        previous_sector_hash=None,
+        next_sector_hash=None
 ):
     '''
         Constructs the scenario specified by :param scenario_type.
@@ -1040,18 +1071,18 @@ def construct_bidirectional_path(
             path = []  # Discovered Path
             edges = []  # Path graph edges used for reservation
 
-            if not is_entity_registered(origin_id) or not is_entity_registered(target_id):
+            if not (origin_id) or not is_entity_registered(target_id):
                 raise EntityNotRegistered()
 
             # Make a copy of the network graph
             net_cpy = __net.copy()
 
             # If hash values are provided
-            if isinstance(query_entity(origin_id), Sector) and foreign_sector_hash_val is not None:
+            if isinstance(query_entity(origin_id), Sector) and previous_sector_hash is not None:
                 remove_links = []
                 for dst_id in net_cpy[origin_id]:
                     for port_id in net_cpy[origin_id][dst_id]:
-                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != foreign_sector_hash_val:
+                        if net_cpy[origin_id][dst_id][port_id]['data']['hash_val'] != previous_sector_hash:
                             remove_links.append((dst_id, port_id))
 
                 for (dst_id, port_id) in remove_links:
@@ -1059,6 +1090,22 @@ def construct_bidirectional_path(
                     __log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
                     net_cpy.remove_edge(dst_id, origin_id, port_id)
                     __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
+
+            if isinstance(query_entity(target_id), Sector) and next_sector_hash is not None:
+                remove_links = []
+                for switch_id in net_cpy[target_id]:
+                    for port_id in net_cpy[target_id][switch_id]:
+                        __log.debug("target_id: {:s}   switch_id: {:d}".format(str(target_id), switch_id))
+                        __log.debug("next_sector_hash: {:d}    hash_val: {:d}".format(next_sector_hash, net_cpy[target_id][switch_id][port_id]['data']['hash_val']))
+                        if net_cpy[target_id][switch_id][port_id]['data']['hash_val'] != next_sector_hash:
+                            remove_links.append((switch_id, port_id))
+
+                for (switch_id, port_id) in remove_links:
+                    net_cpy.remove_edge(target_id, switch_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((target_id, switch_id, port_id))))
+                    net_cpy.remove_edge(switch_id, target_id, port_id)
+                    __log.debug("Removed edge {:s} from temporary topology.".format(str((switch_id, target_id, port_id))))
+
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:

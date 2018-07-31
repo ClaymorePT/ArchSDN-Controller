@@ -74,53 +74,61 @@ q_beta = 0.1
 kspl = {}  # kspl[SectorID][IPv4/IPv6] = minimum length
 
 
-def get_known_shortest_path(sector_id, host_address):
-    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+def get_known_shortest_path(choice, host_address):
+    assert isinstance(choice, tuple), "sector_id expected to be (switch_id, port_id) tuple"
+    assert isinstance(choice[0], int) and choice[0] > 0, "choice 0 tuple element must be a Switch ID"
+    assert isinstance(choice[1], int) and choice[1] > 0, "choice 1 tuple element must be a Port ID"
     assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
         "host_address expected to be IPv4Address or IPv6Address"
 
-    if sector_id not in kspl:
-        kspl[sector_id] = {host_address: None}
-    if host_address not in kspl[sector_id]:
-        kspl[sector_id][host_address] = None
-    return kspl[sector_id][host_address]
+    if choice not in kspl:
+        kspl[choice] = {host_address: None}
+    if host_address not in kspl[choice]:
+        kspl[choice][host_address] = None
+    return kspl[choice][host_address]
 
 
-def set_known_shortest_path(sector_id, host_address, path_length):
-    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+def set_known_shortest_path(choice, host_address, path_length):
+    assert isinstance(choice, tuple), "sector_id expected to be (switch_id, port_id) tuple"
+    assert isinstance(choice[0], int) and choice[0] > 0, "choice 0 tuple element must be a Switch ID"
+    assert isinstance(choice[1], int) and choice[1] > 0, "choice 1 tuple element must be a Port ID"
     assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
         "host_address expected to be IPv4Address or IPv6Address"
     assert isinstance(path_length, int) and path_length > 0, "path_length expected to be int and > 0"
 
-    if sector_id not in kspl:
-        kspl[sector_id] = {host_address: path_length}
+    if choice not in kspl:
+        kspl[choice] = {host_address: path_length}
     else:
-        kspl[sector_id][host_address] = path_length
+        kspl[choice][host_address] = path_length
 
 
-def get_q_value(sector_id, host_address):
-    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+def get_q_value(choice, host_address):
+    assert isinstance(choice, tuple), "sector_id expected to be (switch_id, port_id) tuple"
+    assert isinstance(choice[0], int) and choice[0] > 0, "choice 0 tuple element must be a Switch ID"
+    assert isinstance(choice[1], int) and choice[1] > 0, "choice 1 tuple element must be a Port ID"
     assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
         "host_address expected to be IPv4Address or IPv6Address"
 
-    if sector_id not in QValues:
-        QValues[sector_id] = {host_address: 0}
+    if choice not in QValues:
+        QValues[choice] = {host_address: 0}
     else:
-        if host_address not in QValues[sector_id]:
-            QValues[sector_id][host_address] = 0
-    return QValues[sector_id][host_address]
+        if host_address not in QValues[choice]:
+            QValues[choice][host_address] = 0
+    return QValues[choice][host_address]
 
 
-def set_q_value(sector_id, host_address, q_value):
-    assert isinstance(sector_id, UUID), "sector_id expected to be UUID"
+def set_q_value(choice, host_address, q_value):
+    assert isinstance(choice, tuple), "sector_id expected to be (switch_id, port_id) tuple"
+    assert isinstance(choice[0], int) and choice[0] > 0, "choice 0 tuple element must be a Switch ID"
+    assert isinstance(choice[1], int) and choice[1] > 0, "choice 1 tuple element must be a Port ID"
     assert isinstance(host_address, IPv4Address) or isinstance(host_address, IPv6Address), \
         "host_address expected to be IPv4Address or IPv6Address"
     assert isinstance(q_value, int) or isinstance(q_value, float), "q_value expected to be int or float"
 
-    if sector_id not in QValues:
-        QValues[sector_id] = {host_address: q_value}
+    if choice not in QValues:
+        QValues[choice] = {host_address: q_value}
     else:
-        QValues[sector_id][host_address] = q_value
+        QValues[choice][host_address] = q_value
 
 def calculate_new_qvalue(old_value, forward_value, reward):
     assert isinstance(old_value, int) or isinstance(old_value, float), "old_value expected to be int or float"
