@@ -13,7 +13,7 @@ _log = logging.getLogger(logger_module_name(__file__))
 
 class __MPLSService(Service):
 
-    def __init__(self, local_path, scenario_flows, mpls_label=None):
+    def __init__(self, local_path, scenario_flows, mpls_label):
         self.__local_path = local_path
         self.__scenario_flows = scenario_flows
         self.__mpls_label = mpls_label

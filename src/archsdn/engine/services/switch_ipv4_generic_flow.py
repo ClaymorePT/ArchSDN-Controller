@@ -42,7 +42,8 @@ class __GenericIPv4Service(Service):
                         switch_ofp_parser.OFPBarrierRequest(switch_obj),
                         reply_cls=switch_ofp_parser.OFPBarrierReply
                     )
-        globals.free_mpls_label_id(self.__mpls_label)
+        if self.__mpls_label:
+            globals.free_mpls_label_id(self.__mpls_label)
 
     @property
     def label(self):
