@@ -19,7 +19,7 @@ import ryu.app.ofctl.api as ryu_api
 from archsdn import central
 from archsdn import database
 from archsdn import engine
-from archsdn import p2p_requests
+from archsdn import p2p
 from archsdn.helpers import custom_logging_callback, logger_module_name
 
 # MAC Sword separator definition
@@ -49,7 +49,7 @@ default_configs = {
 def _quit_callback(signum, frame):
     logging.shutdown()
     central.terminate()
-    p2p_requests.shutdown_server()
+    p2p.shutdown_server()
     sys.exit()
 
 
@@ -75,7 +75,7 @@ class ArchSDN(RyuApp):
 
             # ArchSDN CLI options evaluation
             archSDN_cli_opts = dict(tuple(((key, CONF[key]) for key in CONF if "archSDN" in key and CONF[key])))
-            _log.info(str(archSDN_cli_opts))
+            _log.debug("ArchSDN CLI options: {:s}".format(str(archSDN_cli_opts)))
 
             if 'archSDN_id' in archSDN_cli_opts:
                 default_configs['id'] = UUID(archSDN_cli_opts['archSDN_id'])
@@ -142,7 +142,7 @@ class ArchSDN(RyuApp):
             ipv6_info = (default_configs['controllerIP'], default_configs['controllerPort']) \
                 if default_configs['controllerIP'].version == 6 else None
 
-            p2p_requests.initialize_server(default_configs['controllerIP'], default_configs['controllerPort'])
+            p2p.initialize_server(default_configs['controllerIP'], default_configs['controllerPort'])
 
             try:
                 central.register_controller(

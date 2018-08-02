@@ -4,7 +4,6 @@ import logging
 from ipaddress import IPv4Address
 import time
 
-from scapy.packet import Raw
 from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, ICMP
 
@@ -23,7 +22,7 @@ from archsdn.engine.exceptions import PathNotFound
 _log = logging.getLogger(logger_module_name(__file__))
 
 
-def process_icmpv4_packet(packet_in_event):
+def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service management
     assert globals.default_configs, "engine not initialised"
 
     msg = packet_in_event.msg
@@ -57,30 +56,26 @@ def process_icmpv4_packet(packet_in_event):
     pkt_ipv4_src = IPv4Address(ip_layer.src)
     pkt_ipv4_dst = IPv4Address(ip_layer.dst)
     _log.debug(
-        "Received IPv4 packet from host with MAC {:s}, Source IPv4 {:s} to Destiny IPv4 {:s}, "
+        "Received IP packet from host with MAC {:s}, Source IP {:s} to Destiny IP {:s}, "
         "on switch {:016X} at port {:d}".format(
             pkt.src, str(pkt_ipv4_src), str(pkt_ipv4_dst), datapath_id, pkt_in_port
         )
     )
 
-    datapath_obj = msg.datapath
-    icmp_layer = pkt[ICMP]
-    data_layer = pkt[Raw]
-    _log.debug(
-        "Received ICMPv4 Packet - Summary: {:s}".format(icmp_layer.mysummary())
-    )
     if ip_layer.dst == str(ipv4_service):
-        # If the destination IPv4 is the service IPv4, the controller should immediately answer.
+        # If the destination IP is the ipv4_service, return ICMP Port Unreachable.
+        # TODO: Implement a redirect flow and send all packets directed at the ipv4_service IP, to a local TAP
+        #   device serving all the necessary services.
         icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
                      / IP(src=str(ipv4_service), dst=ip_layer.src) \
                      / ICMP(
-                        type="echo-reply",
-                        id=icmp_layer.id,
-                        seq=icmp_layer.seq,
-                    ) \
-                     / Raw(data_layer.load)
+            type="dest-unreach",
+            code="port-unreachable",
+            id=0,
+            seq=0,
+        )
 
-        datapath_obj.send_msg(
+        msg.datapath.send_msg(
             datapath_ofp_parser.OFPPacketOut(
                 datapath=msg.datapath,
                 buffer_id=datapath_ofp.OFP_NO_BUFFER,
@@ -89,39 +84,40 @@ def process_icmpv4_packet(packet_in_event):
                 data=bytes(icmp_reply)
             )
         )
-    elif pkt_ipv4_dst in ipv4_network:  # If the destination IPv4 belongs to the network.
-        # Opens a bi-directional tunnel to target, using the same path in both directions.
+        _log.error("Service Ports are currently not reachable.")
+
+    elif pkt_ipv4_dst in ipv4_network:
+        # Opens a unidirectional tunnel to target, using the same path in both directions.
         target_host_not_found_in_sector = False
+
+        global_path_search_id = (
+            str(controller_uuid),
+            pkt_ipv4_src,
+            pkt_ipv4_dst,
+            "IPv4"
+        )
+
         try:
             addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
             target_switch_id = addr_info_dst["datapath"]
             target_switch_port = addr_info_dst["port"]
             host_a_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
             host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
-            start_time = time.time()
 
-            # Construct a BiDirectional Path between Host A and Host B.
-            bidirectional_path = sector.construct_bidirectional_path(
+            # Construct a UniDirectional_path Path between Host A and Host B.
+            unidirectional_path = sector.construct_unidirectional_path(
                 host_a_entity_id,
-                host_b_entity_id,
-                allocated_bandwith=100
+                host_b_entity_id
             )
 
             # Allocate MPLS label for tunnel
-            if len(bidirectional_path) >= 3:
+            if len(unidirectional_path) >= 3:
                 mpls_label = globals.alloc_mpls_label_id()
             else:
                 mpls_label = None
 
-            # Activating the ICMPv4 service between hosts in the same sector.
-            local_service_scenario = services.icmpv4_flow_activation(bidirectional_path, mpls_label)
-
-            global_path_search_id = (
-                str(controller_uuid),
-                pkt_ipv4_src,
-                pkt_ipv4_dst,
-                "ICMPv4"
-            )
+            # Activating the Generic IPv4 service between hosts in the same sector.
+            local_service_scenario = services.ipv4_generic_flow_activation(unidirectional_path, mpls_label)
 
             globals.set_active_scenario(
                 global_path_search_id,
@@ -130,30 +126,9 @@ def process_icmpv4_packet(packet_in_event):
                 )
             )
 
-            # Reinsert the ICMPv4 packet into the OpenFlow Pipeline, in order to properly process it.
-            msg.datapath.send_msg(
-                datapath_ofp_parser.OFPPacketOut(
-                    datapath=msg.datapath,
-                    buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                    in_port=pkt_in_port,
-                    actions=[
-                        datapath_ofp_parser.OFPActionOutput(
-                            port=datapath_ofp.OFPP_TABLE,
-                            max_len=len(msg.data)
-                        ),
-                    ],
-                    data=msg.data
-                )
-            )
-
-            _log.info(
-                "ICMPv4 Scenario with ID {:s} is now active. "
-                "Implemented in {:f} seconds. "
-                "Path has length {:d}. "
-                "".format(
-                    str(global_path_search_id),
-                    time.time() - start_time,
-                    len(bidirectional_path)
+            _log.warning(
+                "IPv4 data flow opened from host {:s} to host {:s}.".format(
+                    str(host_a_entity_id), str(host_b_entity_id)
                 )
             )
 
@@ -162,16 +137,17 @@ def process_icmpv4_packet(packet_in_event):
 
         if target_host_not_found_in_sector:
             # If the target host does not exist in the same sector, it is necessary to start a parallel
-            #  process which will implement the cross-sector ICMP service between the hosts.
+            #  process which will implement the cross-sector Generic IPv4 data flow from host A to host B.
             # Query host info details directly from foreign sector
 
-            def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id, task_token):
+            def remote_host_generic_ipv4_task(dp_id, p_in_port, global_path_search_id, task_token):
                 # Warning!!! task_token is not a useless argument. The task token exists only to signal
                 #   the existence of a task execution. Once task_token goes out of context,
                 #   the token is destroyed.
                 try:
                     start_time = time.time()
                     target_ipv4 = global_path_search_id[2]
+                    target_ipv4_str = str(target_ipv4)
                     target_host_info = central.query_address_info(ipv4=target_ipv4)
                     host_a_entity_id = sector.query_connected_entity_id(dp_id, p_in_port)
                     target_sector_id = target_host_info.controller_id
@@ -181,10 +157,9 @@ def process_icmpv4_packet(packet_in_event):
                         raise PathNotFound("No adjacent sectors available.")
 
                     if target_sector_id in adjacent_sectors_ids:
-                        # The possible communication links to the target sector
                         possible_links = sector.query_edges_to_sector(target_host_info.controller_id)
                         selected_link = tuple()
-                        bidirectional_path = tuple()
+                        unidirectional_path = tuple()
 
                         while possible_links:
                             # First, lets choose a link to the adjacent sector, according to the q-value
@@ -202,21 +177,22 @@ def process_icmpv4_packet(packet_in_event):
                                     key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                                 )
                             try:
-                                # If the target sector IS adjacent to this sector, contact it directly
-                                # and establish a path
-                                bidirectional_path = sector.construct_bidirectional_path(
+                                # If the target sector IS adjacent to this sector, contact it directly and establish
+                                #  a path
+                                unidirectional_path = sector.construct_unidirectional_path(
                                     host_a_entity_id,
                                     target_sector_id,
                                     allocated_bandwith=100,
                                     next_sector_hash=selected_link[2]
                                 )
                                 break
+
                             except PathNotFound:
                                 possible_links.remove(selected_link)
                                 if len(possible_links) == 0:
                                     raise
 
-                        assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
+                        assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
                         assert isinstance(selected_link, tuple), "selected_link expected to be tuple"
 
                         # Allocate MPLS label for tunnel (required when communicating with Sectors)
@@ -235,7 +211,7 @@ def process_icmpv4_packet(packet_in_event):
                         )
 
                         forward_q_value = 0 if "q_value" not in service_activation_result else \
-                        service_activation_result["q_value"]
+                            service_activation_result["q_value"]
 
                         if service_activation_result["success"]:
                             kspl = globals.get_known_shortest_path(
@@ -260,14 +236,14 @@ def process_icmpv4_packet(packet_in_event):
                             )
                             assert kspl, "kspl cannot be Zero or None."
 
-                            reward = bidirectional_path.remaining_bandwidth_average / kspl
+                            reward = unidirectional_path.remaining_bandwidth_average / kspl
 
-                            old_q_value = globals.get_q_value(chosen_edge, target_ipv4)
+                            old_q_value = globals.get_q_value(chosen_edge, target_ipv4_str)
                             new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
-                            globals.set_q_value(chosen_edge, target_ipv4, new_q_value)
+                            globals.set_q_value(chosen_edge, target_ipv4_str, new_q_value)
 
-                            local_service_scenario = services.icmpv4_flow_activation(
-                                bidirectional_path,
+                            local_service_scenario = services.ipv4_generic_flow_activation(
+                                unidirectional_path,
                                 local_mpls_label,
                                 target_ipv4
                             )
@@ -286,17 +262,28 @@ def process_icmpv4_packet(packet_in_event):
                                 "Old Q-Value: {:f}; "
                                 "New Q-Value: {:f}; "
                                 "Reward: {:f}; "
-                                "Forward Q-Value: {:f}."
-                                "KSPL: {:d};"
+                                "Forward Q-Value: {:f}; "
+                                "KSPL: {:d}"
                                 "".format(
-                                    str(target_sector_id), str(chosen_edge),
+                                    str(target_host_info.controller_id), str(chosen_edge),
                                     old_q_value, new_q_value, reward, forward_q_value, kspl
                                 )
                             )
+
+                            _log.info(
+                                "IPv4 Scenario with ID {:s} is now active. "
+                                "Implemented in {:f} seconds. "
+                                "Path has length {:d}. "
+                                "".format(
+                                    str(global_path_search_id),
+                                    time.time() - start_time,
+                                    len(unidirectional_path) + service_activation_result["path_length"]
+                                )
+                            )
                         else:
-                            old_q_value = globals.get_q_value(chosen_edge, target_ipv4)
+                            old_q_value = globals.get_q_value(chosen_edge, target_ipv4_str)
                             new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                            globals.set_q_value(chosen_edge, target_ipv4, new_q_value)
+                            globals.set_q_value(chosen_edge, target_ipv4_str, new_q_value)
 
                             _log.info(
                                 "Adjacent Sector: {:s}; "
@@ -307,18 +294,21 @@ def process_icmpv4_packet(packet_in_event):
                                 "Reward: {:f}; "
                                 "Forward Q-Value: {:f}."
                                 "".format(
-                                    str(target_sector_id), str(chosen_edge),
+                                    str(target_host_info.controller_id), str(chosen_edge),
                                     old_q_value, new_q_value, -1, forward_q_value
                                 )
                             )
 
                             _log.error(
-                                "Cannot establish an ICMPv4 path to sector {:s}.".format(
+                                "Cannot establish a generic IPv4 flow path to sector {:s}.".format(
                                     str(target_sector_id)
                                 )
                             )
 
                     else:
+                        # If the target sector IS NOT adjacent to this sector, lets select the best adjacent
+                        #   sector used in the past...
+
                         # The possible communication links to the target sector
                         possible_links = []
                         for adjacent_sector in adjacent_sectors_ids:
@@ -360,25 +350,25 @@ def process_icmpv4_packet(packet_in_event):
                                 )
                             )
                             try:
-                                bidirectional_path = sector.construct_bidirectional_path(
+                                unidirectional_path = sector.construct_unidirectional_path(
                                     host_a_entity_id,
                                     selected_sector_id,
-                                    allocated_bandwith=100,
                                     next_sector_hash=selected_link[2]
                                 )
+
                             except PathNotFound:
                                 if len(possible_links) == 0:
                                     raise
                                 continue  # Go back to the beginning of the cycle and try again with a new link
 
-                            assert len(bidirectional_path), "bidirectional_path path length cannot be zero."
+                            assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
                             assert isinstance(selected_link, tuple), "selected_link expected to be tuple"
                             assert selected_sector_id is not None, "selected_sector_id cannot be None"
 
                             # Allocate MPLS label for tunnel (required when communicating with Sectors)
                             local_mpls_label = globals.alloc_mpls_label_id()
+                            selected_sector_proxy = p2p.get_controller_proxy(selected_sector_id)
                             try:
-                                selected_sector_proxy = p2p.get_controller_proxy(selected_sector_id)
                                 service_activation_result = selected_sector_proxy.activate_scenario(
                                     {
                                         "global_path_search_id": global_path_search_id,
@@ -418,27 +408,29 @@ def process_icmpv4_packet(packet_in_event):
                                 )
                                 assert kspl, "kspl cannot be Zero or None."
 
-                                reward = bidirectional_path.remaining_bandwidth_average / kspl
+                                reward = unidirectional_path.remaining_bandwidth_average / kspl
 
                                 old_q_value = globals.get_q_value(chosen_edge, pkt_ipv4_dst)
                                 new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, reward)
                                 globals.set_q_value(chosen_edge, pkt_ipv4_dst, new_q_value)
 
                                 _log.info(
+                                    "Selected Sector: {:s}; "
                                     "Chosen link: {:s}; "
+                                    "Updated Q-Values -> "
                                     "Old Q-Value: {:f}; "
                                     "New Q-Value: {:f}; "
                                     "Reward: {:f}; "
-                                    "Forward Q-Value: {:f}."
-                                    "KSPL: {:d}."
+                                    "Forward Q-Value: {:f}; "
+                                    "KSPL: {:d}"
                                     "".format(
-                                        str(selected_link),
+                                        str(selected_sector_id), str(chosen_edge),
                                         old_q_value, new_q_value, reward, forward_q_value, kspl
                                     )
                                 )
 
-                                local_service_scenario = services.icmpv4_flow_activation(
-                                    bidirectional_path,
+                                local_service_scenario = services.ipv4_generic_flow_activation(
+                                    unidirectional_path,
                                     local_mpls_label,
                                     target_ipv4
                                 )
@@ -451,32 +443,34 @@ def process_icmpv4_packet(packet_in_event):
                                 )
 
                                 _log.info(
-                                    "ICMPv4 Scenario with ID {:s} is now active. "
+                                    "IPv4 Scenario with ID {:s} is now active. "
                                     "Implemented in {:f} seconds. "
                                     "Global Path has length {:d}. "
                                     "Local Path has length {:d}. "
                                     "".format(
                                         str(global_path_search_id),
                                         time.time() - start_time,
-                                        len(bidirectional_path) + service_activation_result["path_length"],
-                                        len(bidirectional_path)
+                                        len(unidirectional_path) + service_activation_result["path_length"],
+                                        len(unidirectional_path)
                                     )
                                 )
                                 break
 
                             else:
-                                old_q_value = globals.get_q_value(chosen_edge, pkt_ipv4_dst)
+                                old_q_value = globals.get_q_value(selected_sector_id, pkt_ipv4_dst)
                                 new_q_value = globals.calculate_new_qvalue(old_q_value, forward_q_value, -1)
-                                globals.set_q_value(chosen_edge, pkt_ipv4_dst, new_q_value)
+                                globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
 
                                 _log.info(
+                                    "Selected Sector: {:s}; "
                                     "Chosen link: {:s}; "
+                                    "Updated Q-Values -> "
                                     "Old Q-Value: {:f}; "
                                     "New Q-Value: {:f}; "
                                     "Reward: {:f}; "
                                     "Forward Q-Value: {:f}."
                                     "".format(
-                                        str(chosen_edge),
+                                        str(selected_sector_id), str(chosen_edge),
                                         old_q_value, new_q_value, -1, forward_q_value
                                     )
                                 )
@@ -493,7 +487,7 @@ def process_icmpv4_packet(packet_in_event):
                                 if len(adjacent_sectors_ids) == 0:
                                     _log.error(
                                         "Adjacent sectors alternatives is exhausted. "
-                                        "Cannot establish ICMPv4 communication to sector {:s}".format(
+                                        "Cannot establish IPv4 generic flow to sector {:s}".format(
                                             str(target_sector_id)
                                         )
                                     )
@@ -514,56 +508,29 @@ def process_icmpv4_packet(packet_in_event):
             #  End of Task Definition
 
             try:
-                global_path_search_id = (
-                    str(controller_uuid),
-                    pkt_ipv4_src,
-                    pkt_ipv4_dst,
-                    "ICMPv4"
-                )
-
                 if globals.is_scenario_active(global_path_search_id):
-                    error_str = "ICMPv4 scenario with ID {:s} is already implemented.".format(
+                    error_str = "IPv4 generic flow scenario with ID {:s} is already implemented.".format(
                         str(global_path_search_id)
                     )
                     _log.warning(error_str)
 
                 else:
                     hub.spawn(
-                        remote_host_icmpv4_task,
+                        remote_host_generic_ipv4_task,
                         datapath_id,
                         pkt_in_port,
                         global_path_search_id,
-                        globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP")
+                        globals.register_implementation_task(global_path_search_id, "IPv4", "*")
                     )
 
             except globals.ImplementationTaskExists:
                     _log.warning(
-                        "ICMPv4 service task is already running for the ipv4 source/target pair "
+                        "IPv4 generic service task is already running for the ipv4 source/target pair "
                         "({:s}, {:s}).".format(
                             str(pkt_ipv4_src), str(pkt_ipv4_dst)
                         )
                     )
 
     else:
-        # If the destination IP is in a different network, return ICMPv4 Network Unreachable
-        icmp_reply = Ether(src=str(mac_service), dst=pkt.src) \
-                     / IP(src=str(ipv4_service), dst=ip_layer.src) \
-                     / ICMP(
-            type="dest-unreach",
-            code="network-unreachable",
-            id=icmp_layer.id,
-            seq=icmp_layer.seq,
-        ) \
-                     / Raw(data_layer.load)
-
-        datapath_obj.send_msg(
-            datapath_ofp_parser.OFPPacketOut(
-                datapath=msg.datapath,
-                buffer_id=datapath_ofp.OFP_NO_BUFFER,
-                in_port=datapath_ofp.OFPP_CONTROLLER,
-                actions=[datapath_ofp_parser.OFPActionOutput(port=pkt_in_port, max_len=len(icmp_reply))],
-                data=bytes(icmp_reply)
-            )
-        )
-
         _log.error("Target {:s} is currently not reachable.".format(str(pkt_ipv4_dst)))
+

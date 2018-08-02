@@ -22,7 +22,7 @@ _log = logging.getLogger(logger_module_name(__file__))
 
 
 def process_event(dp_event):
-    from archsdn import p2p_requests
+    from archsdn import p2p
     assert globals.default_configs, "engine not initialised"
 
     datapath_obj = dp_event.dp
@@ -188,7 +188,7 @@ def process_event(dp_event):
 
             for sector_id in adjacent_sectors_ids:
 
-                sector_proxy = p2p_requests.get_controller_proxy(sector_id)
+                sector_proxy = p2p.get_controller_proxy(sector_id)
                 _log.debug(
                     "Contacting Sector {:s} to destroy path {:s}...".format(
                         str(sector_id),

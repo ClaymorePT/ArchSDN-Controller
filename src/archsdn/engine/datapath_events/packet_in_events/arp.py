@@ -9,7 +9,7 @@ from archsdn.helpers import logger_module_name
 from archsdn.engine import globals
 from archsdn import database
 from archsdn import central
-from archsdn import p2p_requests
+from archsdn import p2p
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -86,7 +86,7 @@ def process_arp(packet_in_event):
                     # Ask the central manager for the controller id and client id.
                     # Then ask the respective controller for information about its client.
                     address_info = central.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
-                    controller_proxy = p2p_requests.get_controller_proxy(address_info.controller_id)
+                    controller_proxy = p2p.get_controller_proxy(address_info.controller_id)
                     target_client_info = controller_proxy.query_address_info(ipv4=IPv4Address(arp_layer.pdst))
                     mac_target = target_client_info["mac"]
 

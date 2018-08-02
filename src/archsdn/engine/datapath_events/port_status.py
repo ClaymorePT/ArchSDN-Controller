@@ -15,7 +15,7 @@ _log = logging.getLogger(logger_module_name(__file__))
 
 
 def process_event(port_change_event):
-    from archsdn import p2p_requests
+    from archsdn import p2p
 
     """
     This procedure answer to port change events, sent by the OpenFlow switches present in the sector.
@@ -141,7 +141,7 @@ def process_event(port_change_event):
                         (_, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
 
                         for sector_id in adjacent_sectors_ids:
-                            sector_proxy = p2p_requests.get_controller_proxy(sector_id)
+                            sector_proxy = p2p.get_controller_proxy(sector_id)
                             _log.debug(
                                 "Contacting Sector {:s} to destroy path {:s}...".format(
                                     str(sector_id),
@@ -249,7 +249,7 @@ def process_event(port_change_event):
                                 (_, adjacent_sectors_ids) = globals.get_active_scenario(global_path_search_id, True)
 
                                 for sector_id in adjacent_sectors_ids:
-                                    sector_proxy = p2p_requests.get_controller_proxy(sector_id)
+                                    sector_proxy = p2p.get_controller_proxy(sector_id)
                                     _log.debug(
                                         "Contacting Sector {:s} to destroy path {:s}...".format(
                                             str(sector_id),
