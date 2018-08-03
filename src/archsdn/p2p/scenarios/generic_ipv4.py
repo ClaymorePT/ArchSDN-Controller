@@ -1,7 +1,6 @@
 
 import sys
 import logging
-
 from uuid import UUID
 from ipaddress import IPv4Address
 
@@ -18,7 +17,6 @@ def activate_generic_ipv4_scenario(scenario_request):
     from archsdn.engine import services
     from archsdn.p2p import get_controller_proxy
     from archsdn.engine.exceptions import PathNotFound
-    from archsdn.engine.entities import Sector
 
     assert isinstance(scenario_request, dict), \
         "scenario_request is expected to be of dict type. Got {:s}.".format(repr(scenario_request))

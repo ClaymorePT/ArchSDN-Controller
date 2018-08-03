@@ -187,6 +187,9 @@ def process_icmpv4_packet(packet_in_event):
                         for edge in sector.query_edges_to_sector(adjacent_sector):
                             possible_links.append((edge[0], edge[1], edge[2], adjacent_sector))
 
+                    possible_links = sorted(
+                        possible_links, key=(lambda k: k[3] == target_host_info.controller_id), reverse=True
+                    )
                     _log.debug(
                         "Available Sector Links for exploration:\n  {:s}".format(
                             "\n  ".join(tuple((str(i) for i in possible_links)))

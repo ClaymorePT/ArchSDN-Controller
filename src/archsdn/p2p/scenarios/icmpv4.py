@@ -19,7 +19,6 @@ def activate_icmpv4_scenario(scenario_request):
     from archsdn.engine import services
     from archsdn.p2p import get_controller_proxy
     from archsdn.engine.exceptions import PathNotFound
-    from archsdn.engine.entities import Sector
 
     assert isinstance(scenario_request, dict), \
         "scenario_request is expected to be of dict type. Got {:s}.".format(repr(scenario_request))
@@ -109,6 +108,10 @@ def activate_icmpv4_scenario(scenario_request):
             for adjacent_sector in adjacent_sectors_ids:
                 for edge in sector.query_edges_to_sector(adjacent_sector):
                     possible_links.append((edge[0], edge[1], edge[2], adjacent_sector))
+
+            possible_links = sorted(
+                possible_links, key=(lambda k: k[3] == target_host_info.controller_id), reverse=True
+            )
 
             _log.debug(
                 "Available Sector Links for exploration:  {:s}".format(
