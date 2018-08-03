@@ -2,7 +2,6 @@ import logging
 from archsdn.helpers import logger_module_name
 from threading import Lock
 from eventlet.semaphore import Semaphore
-from uuid import UUID
 from ipaddress import IPv4Address, IPv6Address
 
 
@@ -65,13 +64,13 @@ TABLE_MISS_PRIORITY = 0
 default_configs = None
 
 
-#Sector QValues
-QValues = {}  # QValues[SectorID][IPv4/IPv6] = Q-Value
+# Sector QValues
+QValues = {}  # QValues[chosen_link][IPv4/IPv6] = Q-Value
 q_alpha = 0.9
 q_beta = 0.1
 
 # Known Shortest Path Length to target
-kspl = {}  # kspl[SectorID][IPv4/IPv6] = minimum length
+kspl = {}  # kspl[chosen_link][IPv4/IPv6] = minimum length
 
 
 def get_known_shortest_path(choice, host_address):
@@ -146,7 +145,7 @@ class ImplementationTaskExists(Exception):
     pass
 
 
-class __Implementation_Task():
+class __ImplementationTask():
     __scenario_implementation_tasks = {
         "IPv4": {
             "ICMP": set(),
@@ -184,11 +183,9 @@ class __Implementation_Task():
 
 
 def register_implementation_task(*args, **kwargs):
-    return __Implementation_Task(*args, **kwargs)
+    return __ImplementationTask(*args, **kwargs)
 
 
-
-#
 # Topology Discovery Beacons
 #
 # The following globals are used for the sector topology discovery
@@ -232,11 +229,13 @@ __active_scenarios_sem = Semaphore(value=1)
 # service_type -> ("ICMPv4", "MPLS")
 #
 
+
 def set_active_scenario(key, data):
     with __active_scenarios_sem:
         assert key not in __active_scenarios, "scenario already active"
 
         __active_scenarios[key] = data
+
 
 def get_active_scenario(key, remove=False):
     with __active_scenarios_sem:
@@ -246,15 +245,18 @@ def get_active_scenario(key, remove=False):
             del __active_scenarios[key]
         return temp
 
+
 def is_scenario_active(key):
     with __active_scenarios_sem:
         return key in __active_scenarios
+
 
 def delete_active_scenario(key):
     with __active_scenarios_sem:
         assert key in __active_scenarios, "scenario not active"
 
         del __active_scenarios[key]
+
 
 def get_active_scenarios_keys():
     with __active_scenarios_sem:
@@ -282,6 +284,7 @@ def get_active_scenarios_keys():
 # - Packet host ingressing (Host -> Tunnel)
 # - Packet host egressing (Tunnel -> Host)
 # - Packet mpls label update (Tunnel -> Tunnel)
+
 
 mapped_services = {
     "IPv4": {

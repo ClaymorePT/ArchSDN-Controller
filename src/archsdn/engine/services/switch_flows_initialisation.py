@@ -18,13 +18,6 @@ def init_switch_flows(switch_obj):
     ipv4_service = central_policies_addresses["ipv4_service"]
     mac_service = central_policies_addresses["mac_service"]
 
-    #  Prepare __mapped_services to receive service activations
-    #globals.mapped_services[switch_obj.id] = {
-    #    "ICMP4": {},
-    #    "IPv4": {},
-    #    "MPLS": {},
-    #}
-
     #
     # Reset Switch state and initialize bootstrap sequence
     #
@@ -33,7 +26,6 @@ def init_switch_flows(switch_obj):
     # Instructions order for proper reset of a switch
     #  1 -> Disable all ports, except for the control
     #  2 -> Clear all flow tables, group table and meter table
-
     switch_obj.send_msg(
         ofp_parser.OFPRoleRequest(
             switch_obj,
@@ -86,7 +78,7 @@ def init_switch_flows(switch_obj):
 
     # Stage 2 -> Configure Tables with default flows.
 
-    # Inserting Table-Miss flows for all tables
+    # Inserting Table-Miss flows in all tables
     for table_no in globals.ARCHSDN_TABLES:
         switch_obj.send_msg(
             ofp_parser.OFPFlowMod(
@@ -101,11 +93,10 @@ def init_switch_flows(switch_obj):
             )
         )
 
-    #  Default Flows for __PORT_SEGREGATION_TABLE are:
+    #  Default Flows for PORT_SEGREGATION_TABLE are:
     #  - DHCP Boot
     #  - ArchSDN Discovery Beacon
-    #  - Table-Miss
-    default_flows = []
+    default_flows = list()
 
     default_flows.append(
         ofp_parser.OFPFlowMod(
@@ -149,10 +140,11 @@ def init_switch_flows(switch_obj):
         )
     )
 
-    #  Default Flows for __HOST_FILTERING_TABLE are:
+    #  Default Flows for HOST_FILTERING_TABLE are:
     #  - DHCP packets from registered hosts, are redirected to controller.
     #  - ARP packets whose destination are IPs within the service network, are redirected to controller.
     #  - ICMP packets destined to the service IP network, are redirected to controller.
+    #  - ICMP packets destined to the IP network, are redirected to controller.
     #  - DNS packets destined to the service IP network, are redirected to controller.
     #  - IPv4 packets sent by a network host to another network host, are redirected to controller.
 
@@ -205,8 +197,7 @@ def init_switch_flows(switch_obj):
         )
     )
 
-    # Activate a flow to redirect to the controller ICMP packets sent from the host to the
-    #   controller, from pkt_in_port.
+    # Activate a flow to redirect to the controller ICMP packets sent from the host to the controller, from pkt_in_port.
     default_flows.append(
         ofp_parser.OFPFlowMod(
             datapath=switch_obj,
@@ -230,8 +221,7 @@ def init_switch_flows(switch_obj):
         )
     )
 
-    # Activate a flow to redirect to the controller ICMP packets sent from the host to the
-    #   network, from pkt_in_port.
+    # Activate a flow to redirect to the controller ICMP packets sent from the host to the network, from pkt_in_port.
     default_flows.append(
         ofp_parser.OFPFlowMod(
             datapath=switch_obj,
@@ -256,9 +246,7 @@ def init_switch_flows(switch_obj):
         )
     )
 
-
-    # Activate a flow to redirect to the controller DNS packets sent from the host to the
-    #   controller, from pkt_in_port.
+    # Activate a flow to redirect to the controller DNS packets sent from the host to the controller, from pkt_in_port.
     default_flows.append(
         ofp_parser.OFPFlowMod(
             datapath=switch_obj,
@@ -326,7 +314,7 @@ def init_switch_flows(switch_obj):
         )
     )
 
-
+    # Send all flows to switch.
     for flow in default_flows:
         switch_obj.send_msg(flow)
     globals.send_msg(ofp_parser.OFPBarrierRequest(switch_obj), reply_cls=ofp_parser.OFPBarrierReply)
