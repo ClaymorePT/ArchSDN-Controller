@@ -69,9 +69,17 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
     switches_info = bidirectional_path.switches_info
     host_a_entity_obj = sector.query_entity(entity_a_id)
     host_b_entity_obj = sector.query_entity(entity_b_id)
+    mapped_icmpv4_services = globals.mapped_services["IPv4"]["ICMP"]
 
     assert isinstance(host_a_entity_obj, Host), "a_entity_obj type is not Host"
     assert isinstance(host_b_entity_obj, Host), "b_entity_obj type is not Host"
+
+    if (host_a_entity_obj.ipv4, host_b_entity_obj.ipv4) in mapped_icmpv4_services:
+        raise Exception(
+            "ICMPv4 service from {:s} to {:s} is already implemented.".format(
+                str(host_a_entity_obj.id), str(host_b_entity_obj.id)
+            )
+        )
 
     if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
@@ -90,7 +98,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
@@ -110,7 +119,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
@@ -209,7 +219,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 side_a_switch_ofp_parser.OFPInstructionActions(
@@ -273,7 +284,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 side_a_switch_ofp_parser.OFPInstructionActions(
@@ -311,7 +323,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_b_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_b_entity_obj.ipv4), ipv4_dst=str(host_a_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 side_b_switch_ofp_parser.OFPInstructionActions(
@@ -375,7 +388,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=side_b_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 side_b_switch_ofp_parser.OFPInstructionActions(
@@ -413,20 +427,33 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
         )
         ###############################
 
-    return __ICMPv4Service(bidirectional_path, tunnel_flows, mpls_label)
+    icmpv4_service = __ICMPv4Service(bidirectional_path, tunnel_flows, mpls_label)
+
+    # Registering the established service
+    mapped_icmpv4_services[(host_a_entity_obj.ipv4, host_b_entity_obj.ipv4)] = icmpv4_service
+
+    return icmpv4_service
 
 
 def __icmpv4_flow_activation_host_to_sector(
-        bidirectional_path, local_mpls_label, target_ipv4
+    bidirectional_path, local_mpls_label, sector_mpls_label, target_ipv4
 ):
     entity_a_id = bidirectional_path.entity_a
     entity_b_id = bidirectional_path.entity_b
     switches_info = bidirectional_path.switches_info
     host_entity_obj = sector.query_entity(entity_a_id)
     sector_entity_obj = sector.query_entity(entity_b_id)
+    mapped_icmpv4_services = globals.mapped_services["IPv4"]["ICMP"]
 
     assert isinstance(host_entity_obj, Host), "host_entity_obj type is not Host"
     assert isinstance(sector_entity_obj, Sector), "sector_entity_obj type is not Sector"
+
+    if (host_entity_obj.ipv4, target_ipv4) in mapped_icmpv4_services:
+        raise Exception(
+            "ICMPv4 service from {:s} to {:s} is already implemented.".format(
+                str(host_entity_obj.ipv4), str(target_ipv4)
+            )
+        )
 
     if len(switches_info) == 1:
         (unique_switch_id, switch_in_port, switch_out_port) = switches_info[0]
@@ -434,7 +461,7 @@ def __icmpv4_flow_activation_host_to_sector(
         single_switch_ofp_parser = single_switch_obj.ofproto_parser
         single_switch_ofp = single_switch_obj.ofproto
 
-        ingress_from_local_host_to_foreign_host_flow = single_switch_ofp_parser.OFPFlowMod(
+        ingress_from_local_host_to_sector_flow = single_switch_ofp_parser.OFPFlowMod(
             datapath=single_switch_obj,
             cookie=globals.alloc_cookie_id(),
             table_id=globals.HOST_FILTERING_TABLE,
@@ -442,7 +469,8 @@ def __icmpv4_flow_activation_host_to_sector(
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_dst=str(target_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_entity_obj.ipv4), ipv4_dst=str(target_ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
@@ -450,27 +478,7 @@ def __icmpv4_flow_activation_host_to_sector(
                     [
                         single_switch_ofp_parser.OFPActionPushMpls(),
                         single_switch_ofp_parser.OFPActionSetField(mpls_label=local_mpls_label),
-                    ]
-                ),
-                single_switch_ofp_parser.OFPInstructionGotoTable(table_id=globals.SECTOR_FILTERING_TABLE),
-            ]
-        )
-
-        egress_from_foreign_host_to_local_host_flow = single_switch_ofp_parser.OFPFlowMod(
-            datapath=single_switch_obj,
-            cookie=globals.alloc_cookie_id(),
-            table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
-            command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
-            match=single_switch_ofp_parser.OFPMatch(
-                eth_type=ether.ETH_TYPE_IP,
-                ipv4_dst=str(host_entity_obj.ipv4), ipv4_src=str(target_ipv4),  ip_proto=inet.IPPROTO_ICMP
-            ),
-            instructions=[
-                single_switch_ofp_parser.OFPInstructionActions(
-                    single_switch_ofp.OFPIT_APPLY_ACTIONS,
-                    [
-                        single_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
+                        single_switch_ofp_parser.OFPActionOutput(port=switch_out_port),
                     ]
                 ),
             ]
@@ -483,7 +491,7 @@ def __icmpv4_flow_activation_host_to_sector(
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.SECTOR_TABLE_MPLS_POP_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
-                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
+                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_mpls_label
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
@@ -496,38 +504,39 @@ def __icmpv4_flow_activation_host_to_sector(
             ]
         )
 
-        ingress_to_sector_flow = single_switch_ofp_parser.OFPFlowMod(
+        egress_from_foreign_host_to_local_host_flow = single_switch_ofp_parser.OFPFlowMod(
             datapath=single_switch_obj,
             cookie=globals.alloc_cookie_id(),
-            table_id=globals.SECTOR_FILTERING_TABLE,
+            table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.SECTOR_TABLE_MPLS_POP_PRIORITY,
+            priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
-                in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
+                eth_type=ether.ETH_TYPE_IP,
+                ipv4_src=str(target_ipv4), ipv4_dst=str(host_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
                     single_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
-                        single_switch_ofp_parser.OFPActionOutput(port=switch_out_port),
+                        single_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
                     ]
                 ),
             ]
         )
 
-        single_switch_obj.send_msg(ingress_from_local_host_to_foreign_host_flow)
-        single_switch_obj.send_msg(egress_from_foreign_host_to_local_host_flow)
+        single_switch_obj.send_msg(ingress_from_local_host_to_sector_flow)
         single_switch_obj.send_msg(egress_from_sector_flow)
-        single_switch_obj.send_msg(ingress_to_sector_flow)
+        single_switch_obj.send_msg(egress_from_foreign_host_to_local_host_flow)
 
         globals.send_msg(
             single_switch_ofp_parser.OFPBarrierRequest(single_switch_obj),
             reply_cls=single_switch_ofp_parser.OFPBarrierReply
         )
         tunnel_flows = (
-            (ingress_from_local_host_to_foreign_host_flow,),
+            (ingress_from_local_host_to_sector_flow,),
             (egress_from_foreign_host_to_local_host_flow,),
-            (egress_from_sector_flow, ingress_to_sector_flow)
+            (egress_from_sector_flow,)
         )
 
     else:
@@ -610,7 +619,8 @@ def __icmpv4_flow_activation_host_to_sector(
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_dst=str(target_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_entity_obj.ipv4), ipv4_dst=str(target_ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 local_host_side_switch_ofp_parser.OFPInstructionActions(
@@ -674,7 +684,8 @@ def __icmpv4_flow_activation_host_to_sector(
             priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(target_ipv4), ipv4_dst=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(target_ipv4), ipv4_dst=str(host_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 local_host_side_switch_ofp_parser.OFPInstructionActions(
@@ -711,12 +722,13 @@ def __icmpv4_flow_activation_host_to_sector(
             command=sector_side_switch_ofp.OFPFC_ADD,
             priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_side_switch_ofp_parser.OFPMatch(
-                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
+                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_mpls_label
             ),
             instructions=[
                 sector_side_switch_ofp_parser.OFPInstructionActions(
                     sector_side_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
+                        sector_side_switch_ofp_parser.OFPActionSetField(mpls_label=local_mpls_label),
                         sector_side_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
                     ]
                 ),
@@ -766,20 +778,35 @@ def __icmpv4_flow_activation_host_to_sector(
         )
         ###############################
 
-    return __ICMPv4Service(bidirectional_path, tunnel_flows, local_mpls_label)
+    icmpv4_service = __ICMPv4Service(bidirectional_path, tunnel_flows, local_mpls_label)
+
+    # Registering the established service
+    mapped_icmpv4_services[(host_entity_obj.ipv4, target_ipv4)] = icmpv4_service
+
+    return icmpv4_service
+
+
 
 
 def __icmpv4_flow_activation_sector_to_host(
-        bidirectional_path, local_mpls_label, sector_mpls_label, source_ipv4
+        bidirectional_path, sector_mpls_label, local_mpls_label, source_ipv4
 ):
     entity_a_id = bidirectional_path.entity_a
     entity_b_id = bidirectional_path.entity_b
     switches_info = bidirectional_path.switches_info
     sector_entity_obj = sector.query_entity(entity_a_id)
     host_entity_obj = sector.query_entity(entity_b_id)
+    mapped_icmpv4_services = globals.mapped_services["IPv4"]["ICMP"]
 
     assert isinstance(sector_entity_obj, Sector), "sector_entity_obj type is not Sector"
     assert isinstance(host_entity_obj, Host), "host_entity_obj type is not Host"
+
+    if (source_ipv4, host_entity_obj.ipv4) in mapped_icmpv4_services:
+        raise Exception(
+            "ICMPv4 service from {:s} to {:s} is already implemented.".format(
+                str(source_ipv4), str(host_entity_obj.ipv4)
+            )
+        )
 
     if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
@@ -810,20 +837,22 @@ def __icmpv4_flow_activation_sector_to_host(
             ]
         )
 
-        ingression_into_sector_side_flow = single_switch_ofp_parser.OFPFlowMod(
+        foreign_host_egression_flow = single_switch_ofp_parser.OFPFlowMod(
             datapath=single_switch_obj,
             cookie=globals.alloc_cookie_id(),
-            table_id=globals.SECTOR_FILTERING_TABLE,
+            table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.SECTOR_TABLE_MPLS_SWITCH_PRIORITY,
+            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
-                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_mpls_label
+                eth_type=ether.ETH_TYPE_IP,
+                ipv4_src=str(source_ipv4), ipv4_dst=str(host_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
                     single_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
-                        single_switch_ofp_parser.OFPActionOutput(port=switch_in_port),
+                        single_switch_ofp_parser.OFPActionOutput(port=switch_out_port)
                     ]
                 ),
             ]
@@ -837,44 +866,24 @@ def __icmpv4_flow_activation_sector_to_host(
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_dst=str(source_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_entity_obj.ipv4), ipv4_dst=str(source_ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
                     single_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
                         single_switch_ofp_parser.OFPActionPushMpls(),
-                        single_switch_ofp_parser.OFPActionSetField(mpls_label=sector_mpls_label),
-                    ]
-                ),
-                single_switch_ofp_parser.OFPInstructionGotoTable(table_id=globals.SECTOR_FILTERING_TABLE),
-            ]
-        )
-
-        foreign_host_egression_flow = single_switch_ofp_parser.OFPFlowMod(
-            datapath=single_switch_obj,
-            cookie=globals.alloc_cookie_id(),
-            table_id=globals.FOREIGN_HOST_FILTERING_TABLE,
-            command=single_switch_ofp.OFPFC_ADD,
-            priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
-            match=single_switch_ofp_parser.OFPMatch(
-                eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(source_ipv4), ipv4_dst=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
-            ),
-            instructions=[
-                single_switch_ofp_parser.OFPInstructionActions(
-                    single_switch_ofp.OFPIT_APPLY_ACTIONS,
-                    [
-                        single_switch_ofp_parser.OFPActionOutput(port=switch_out_port)
+                        single_switch_ofp_parser.OFPActionSetField(mpls_label=local_mpls_label),
+                        single_switch_ofp_parser.OFPActionOutput(port=switch_in_port),
                     ]
                 ),
             ]
         )
 
         single_switch_obj.send_msg(egression_from_sector_side_flow)
-        single_switch_obj.send_msg(ingression_into_sector_side_flow)
-        single_switch_obj.send_msg(local_host_ingression_flow)
         single_switch_obj.send_msg(foreign_host_egression_flow)
+        single_switch_obj.send_msg(local_host_ingression_flow)
 
         globals.send_msg(
             single_switch_ofp_parser.OFPBarrierRequest(single_switch_obj),
@@ -883,13 +892,14 @@ def __icmpv4_flow_activation_sector_to_host(
         tunnel_flows = (
             (local_host_ingression_flow,),
             (foreign_host_egression_flow,),
-            (egression_from_sector_side_flow, ingression_into_sector_side_flow),
+            (egression_from_sector_side_flow,),
         )
 
     else:
         # Multiswitch path requires an MPLS label to build a tunnel.
         assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
-        assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+        assert 0 <= local_mpls_label < pow(2, 20), \
+            "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
 
         #  Information about the path switches.
         #  Core switches are those who are in the middle of the path, not on the edges.
@@ -992,7 +1002,6 @@ def __icmpv4_flow_activation_sector_to_host(
                 sector_side_switch_ofp_parser.OFPInstructionActions(
                     sector_side_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
-                        sector_side_switch_ofp_parser.OFPActionSetField(mpls_label=sector_mpls_label),
                         sector_side_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
                     ]
                 ),
@@ -1023,7 +1032,8 @@ def __icmpv4_flow_activation_sector_to_host(
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_dst=str(source_ipv4), ipv4_src=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(host_entity_obj.ipv4), ipv4_dst=str(source_ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=0, icmpv4_code=0
             ),
             instructions=[
                 local_host_side_switch_ofp_parser.OFPInstructionActions(
@@ -1074,7 +1084,9 @@ def __icmpv4_flow_activation_sector_to_host(
                         local_host_side_switch_ofp_parser.OFPActionPopMpls(),
                     ]
                 ),
-                local_host_side_switch_ofp_parser.OFPInstructionGotoTable(table_id=globals.FOREIGN_HOST_FILTERING_TABLE),
+                local_host_side_switch_ofp_parser.OFPInstructionGotoTable(
+                    table_id=globals.FOREIGN_HOST_FILTERING_TABLE
+                ),
             ]
         )
 
@@ -1087,7 +1099,8 @@ def __icmpv4_flow_activation_sector_to_host(
             priority=globals.FOREIGN_HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
-                ipv4_src=str(source_ipv4), ipv4_dst=str(host_entity_obj.ipv4), ip_proto=inet.IPPROTO_ICMP
+                ipv4_src=str(source_ipv4), ipv4_dst=str(host_entity_obj.ipv4),
+                ip_proto=inet.IPPROTO_ICMP, icmpv4_type=8, icmpv4_code=0
             ),
             instructions=[
                 local_host_side_switch_ofp_parser.OFPInstructionActions(
@@ -1123,7 +1136,13 @@ def __icmpv4_flow_activation_sector_to_host(
         )
         ###############################
 
-    return __ICMPv4Service(bidirectional_path, tunnel_flows, local_mpls_label)
+    icmpv4_service = __ICMPv4Service(bidirectional_path, tunnel_flows, local_mpls_label)
+
+    # Registering the established service
+    mapped_icmpv4_services[(source_ipv4, host_entity_obj.ipv4)] = icmpv4_service
+
+    return icmpv4_service
+
 
 
 __activators = {
@@ -1153,7 +1172,6 @@ def icmpv4_flow_activation(bidirectional_path, *args, **kwargs):
 
     host_a_entity_obj = sector.query_entity(bidirectional_path.entity_a)
     host_b_entity_obj = sector.query_entity(bidirectional_path.entity_b)
-    mapped_icmpv4_services = globals.mapped_services["IPv4"]["ICMP"]
 
     if (type(host_a_entity_obj), type(host_b_entity_obj)) not in __activators:
         raise TypeError(
@@ -1164,20 +1182,7 @@ def icmpv4_flow_activation(bidirectional_path, *args, **kwargs):
             )
         )
 
-    if (host_a_entity_obj.id, host_b_entity_obj.id) in mapped_icmpv4_services or \
-        (host_b_entity_obj.id, host_a_entity_obj.id) in mapped_icmpv4_services:
-        raise Exception(
-            "ICMPv4 service between {:s} and {:s} is already implemented.".format(
-                str(host_a_entity_obj.id), str(host_b_entity_obj.id)
-            )
-        )
-
     # Attempt to activate the service
-    icmpv4_service = __activators[(type(host_a_entity_obj), type(host_b_entity_obj))](
+    return __activators[(type(host_a_entity_obj), type(host_b_entity_obj))](
         bidirectional_path, *args, **kwargs
     )
-
-    # Registering the established service
-    mapped_icmpv4_services[(host_a_entity_obj.id, host_b_entity_obj.id)] = icmpv4_service
-
-    return icmpv4_service

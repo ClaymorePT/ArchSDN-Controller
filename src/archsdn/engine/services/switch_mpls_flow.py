@@ -62,7 +62,7 @@ class __MPLSService(Service):
 
 
 def __bidirectional_mpls_flow_activation(
-        bidirectional_path, local_mpls_label, requesting_sector_mpls_label
+        bidirectional_path, local_mpls_label, sector_a_mpls_label, sector_b_mpls_label
 ):
     entity_a_id = bidirectional_path.entity_a
     entity_b_id = bidirectional_path.entity_b
@@ -75,8 +75,25 @@ def __bidirectional_mpls_flow_activation(
 
     assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
     assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
-    assert isinstance(requesting_sector_mpls_label, int), "requesting_sector_mpls_label is not int"
-    assert 0 <= requesting_sector_mpls_label < pow(2, 20), "requesting_sector_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+
+    assert isinstance(sector_a_mpls_label, int), "sector_a_mpls_label is not int"
+    assert 0 <= sector_a_mpls_label < pow(2, 20), \
+        "sector_a_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+
+    assert isinstance(sector_b_mpls_label, int), "sector_b_mpls_label is not int"
+    assert 0 <= sector_b_mpls_label < pow(2, 20), \
+        "sector_b_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+
+    mapped_mpls_services = globals.mapped_services["MPLS"]["TwoWay"]
+
+    if ((sector_a_entity_obj.id, sector_a_mpls_label),
+        (sector_b_entity_obj.id, sector_b_mpls_label)) in mapped_mpls_services:
+        raise Exception(
+            "MPLS service to cross traffic coming from Sector {:s} with Lable {:d}, "
+            "directed to Sector {:s} with label {:d} is already implemented.".format(
+                str(sector_a_entity_obj.id), sector_a_mpls_label, str(sector_b_entity_obj.id), sector_b_mpls_label
+            )
+        )
 
     if len(switches_info) == 1:
         # When there's only one switch in the path, it is only necessary to change the labels and switch the packets
@@ -94,7 +111,7 @@ def __bidirectional_mpls_flow_activation(
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
-                in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=requesting_sector_mpls_label
+                in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_a_mpls_label
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
@@ -114,13 +131,13 @@ def __bidirectional_mpls_flow_activation(
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=single_switch_ofp_parser.OFPMatch(
-                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
+                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_b_mpls_label
             ),
             instructions=[
                 single_switch_ofp_parser.OFPInstructionActions(
                     single_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
-                        single_switch_ofp_parser.OFPActionSetField(mpls_label=requesting_sector_mpls_label),
+                        single_switch_ofp_parser.OFPActionSetField(mpls_label=local_mpls_label),
                         single_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
                     ]
                 ),
@@ -217,7 +234,7 @@ def __bidirectional_mpls_flow_activation(
             command=sector_a_side_switch_ofp.OFPFC_ADD,
             priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_a_side_switch_ofp_parser.OFPMatch(
-                in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=requesting_sector_mpls_label
+                in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_a_mpls_label
             ),
             instructions=[
                 sector_a_side_switch_ofp_parser.OFPInstructionActions(
@@ -244,7 +261,6 @@ def __bidirectional_mpls_flow_activation(
                 sector_a_side_switch_ofp_parser.OFPInstructionActions(
                     sector_a_side_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
-                        sector_a_side_switch_ofp_parser.OFPActionSetField(mpls_label=requesting_sector_mpls_label),
                         sector_a_side_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
                     ]
                 ),
@@ -275,12 +291,13 @@ def __bidirectional_mpls_flow_activation(
             command=sector_b_side_switch_ofp.OFPFC_ADD,
             priority=globals.SECTOR_TABLE_MPLS_CHANGE_PRIORITY,
             match=sector_b_side_switch_ofp_parser.OFPMatch(
-                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=local_mpls_label
+                in_port=switch_out_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=sector_b_mpls_label
             ),
             instructions=[
                 sector_b_side_switch_ofp_parser.OFPInstructionActions(
                     sector_b_side_switch_ofp.OFPIT_APPLY_ACTIONS,
                     [
+                        sector_b_side_switch_ofp_parser.OFPActionSetField(mpls_label=local_mpls_label),
                         sector_b_side_switch_ofp_parser.OFPActionOutput(port=switch_in_port)
                     ]
                 ),
@@ -327,7 +344,12 @@ def __bidirectional_mpls_flow_activation(
         )
         ###############################
 
-    return __MPLSService(bidirectional_path, tunnel_flows, local_mpls_label)
+    mpls_service = __MPLSService(bidirectional_path, tunnel_flows, local_mpls_label)
+    mapped_mpls_services[
+        (sector_a_entity_obj.id, sector_a_mpls_label),
+        (sector_b_entity_obj.id, sector_b_mpls_label)
+    ] = mpls_service
+    return mpls_service
 
 
 def __unidirectional_mpls_flow_activation(
@@ -346,7 +368,19 @@ def __unidirectional_mpls_flow_activation(
     assert isinstance(local_mpls_label, int), "local_mpls_label is not int"
     assert 0 <= local_mpls_label < pow(2, 20), "local_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
     assert isinstance(requesting_sector_mpls_label, int), "requesting_sector_mpls_label is not int"
-    assert 0 <= requesting_sector_mpls_label < pow(2, 20), "requesting_sector_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+    assert 0 <= requesting_sector_mpls_label < pow(2, 20), \
+        "requesting_sector_mpls_label expected to be between 0 and {:X}".format(pow(2, 20))
+
+    mapped_mpls_services = globals.mapped_services["MPLS"]["OneWay"]
+
+    if ((sector_a_entity_obj.id, requesting_sector_mpls_label), (sector_b_entity_obj.id, None)) in mapped_mpls_services:
+        raise Exception(
+            "MPLS Unidirectional service to redirect traffic coming from Sector {:s} with Lable {:d}, to Sector {:s} is"
+            " already implemented."
+            "".format(
+                str(sector_a_entity_obj.id), requesting_sector_mpls_label, str(sector_b_entity_obj.id)
+            )
+        )
 
     if len(switches_info) == 1:
         # When there's only one switch in the path, it is only necessary to change the labels and switch the packets
@@ -509,9 +543,11 @@ def __unidirectional_mpls_flow_activation(
         )
         ###############################
 
-    return __MPLSService(unidirectional_path, tunnel_flows, local_mpls_label)
-
-
+    mpls_service = __MPLSService(unidirectional_path, tunnel_flows, local_mpls_label)
+    mapped_mpls_services[
+        (sector_a_entity_obj.id, requesting_sector_mpls_label), (sector_b_entity_obj.id, None)
+    ] = mpls_service
+    return mpls_service
 
 
 def sector_to_sector_mpls_flow_activation(local_path, *args, **kwargs):
@@ -535,32 +571,12 @@ def sector_to_sector_mpls_flow_activation(local_path, *args, **kwargs):
         raise TypeError("MPLS Flow activation is only supported for Sector to Sector scenarios,")
 
     if local_path.is_bidirectional():
-        mapped_mpls_services = globals.mapped_services["MPLS"]["TwoWay"]
-
-        if (sector_a_entity_obj.id, sector_b_entity_obj.id) in mapped_mpls_services or \
-                (sector_b_entity_obj.id, sector_a_entity_obj.id) in mapped_mpls_services:
-            raise Exception(
-                "MPLS service between Sector {:s} and Sector {:s} is already implemented.".format(
-                    str(sector_a_entity_obj.id), str(sector_b_entity_obj.id)
-                )
-            )
-
         # Attempt to activate the service
-        mpls_service = __bidirectional_mpls_flow_activation(local_path, *args, **kwargs)
+        return __bidirectional_mpls_flow_activation(local_path, *args, **kwargs)
 
     else:
-        mapped_mpls_services = globals.mapped_services["MPLS"]["OneWay"]
-
-        if (sector_a_entity_obj.id, sector_b_entity_obj.id) in mapped_mpls_services:
-            raise Exception(
-                "MPLS service flow from Sector {:s} to Sector {:s} is already implemented.".format(
-                    str(sector_a_entity_obj.id), str(sector_b_entity_obj.id)
-                )
-            )
         # Attempt to activate the service
-        mpls_service = __unidirectional_mpls_flow_activation(local_path, *args, **kwargs)
+        return __unidirectional_mpls_flow_activation(local_path, *args, **kwargs)
 
-    mapped_mpls_services[(sector_a_entity_obj.id, sector_b_entity_obj.id)] = mpls_service
 
-    return mpls_service
 
