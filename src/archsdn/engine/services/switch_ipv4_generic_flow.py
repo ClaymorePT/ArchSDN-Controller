@@ -66,9 +66,18 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
     switches_info = unidirectional_path.switches_info
     host_a_entity_obj = sector.query_entity(host_a_entity_id)
     host_b_entity_obj = sector.query_entity(host_b_entity_id)
+    mapped_ipv4_services = globals.mapped_services["IPv4"]["*"]
 
     assert isinstance(host_a_entity_obj, Host), "a_entity_obj type is not Host"
     assert isinstance(host_b_entity_obj, Host), "b_entity_obj type is not Host"
+
+    # Checking if IPv4 generic service is already established
+    if (host_a_entity_obj.ipv4, host_b_entity_obj.ipv4) in mapped_ipv4_services:
+        raise Exception(
+            "IPv4 service for generic traffic from {:s} to {:s}, already exists.".format(
+                str(host_a_entity_obj.ipv4), str(host_b_entity_obj.ipv4)
+            )
+        )
 
     if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
@@ -129,7 +138,7 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
                 cookie=globals.alloc_cookie_id(),
                 table_id=globals.MPLS_FILTERING_TABLE,
                 command=middle_switch_ofp.OFPFC_ADD,
-                priority=globals.SECTOR_TABLE_MPLS_SWITCH_PRIORITY,
+                priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
                 match=middle_switch_ofp_parser.OFPMatch(
                     in_port=switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
                 ),
@@ -220,7 +229,7 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             cookie=globals.alloc_cookie_id(),
             table_id=globals.MPLS_FILTERING_TABLE,
             command=egressing_switch_ofp.OFPFC_ADD,
-            priority=globals.SECTOR_TABLE_MPLS_POP_PRIORITY,
+            priority=globals.MPLS_TABLE_MPLS_SWITCH_PRIORITY,
             match=egressing_switch_ofp_parser.OFPMatch(
                 in_port=egress_switch_in_port, eth_type=ether.ETH_TYPE_MPLS, mpls_label=mpls_label
             ),
@@ -275,7 +284,12 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
             tuple()
         )
 
-    return __GenericIPv4Service(unidirectional_path, tunnel_flows, mpls_label)
+    # Registering the established service
+    ipv4_service = __GenericIPv4Service(unidirectional_path, tunnel_flows, mpls_label)
+    mapped_ipv4_services[(host_a_entity_obj.ipv4, host_b_entity_obj.ipv4)] = ipv4_service
+    return ipv4_service
+
+
 
 
 def __ipv4_flow_activation_host_to_sector(unidirectional_path, local_mpls_label, target_ipv4):
@@ -284,9 +298,18 @@ def __ipv4_flow_activation_host_to_sector(unidirectional_path, local_mpls_label,
     switches_info = unidirectional_path.switches_info
     host_entity_obj = sector.query_entity(host_entity_id)
     sector_entity_obj = sector.query_entity(sector_entity_id)
+    mapped_ipv4_services = globals.mapped_services["IPv4"]["*"]
 
     assert isinstance(host_entity_obj, Host), "host_entity_obj type is not Host"
     assert isinstance(sector_entity_obj, Sector), "sector_entity_obj type is not Sector"
+
+    # Checking if IPv4 generic service is already established
+    if (host_entity_obj.ipv4, target_ipv4) in mapped_ipv4_services:
+        raise Exception(
+            "IPv4 service for generic traffic from {:s} to {:s}, already exists.".format(
+                str(host_entity_obj.ipv4), str(target_ipv4)
+            )
+        )
 
     if len(switches_info) == 1:
         (unique_switch_id, switch_in_port, switch_out_port) = switches_info[0]
@@ -493,7 +516,10 @@ def __ipv4_flow_activation_host_to_sector(unidirectional_path, local_mpls_label,
         )
         ###############################
 
-    return __GenericIPv4Service(unidirectional_path, tunnel_flows, local_mpls_label)
+    # Registering the established service
+    ipv4_service = __GenericIPv4Service(unidirectional_path, tunnel_flows, local_mpls_label)
+    mapped_ipv4_services[(host_entity_obj.ipv4, target_ipv4)] = ipv4_service
+    return ipv4_service
 
 
 def __ipv4_flow_activation_sector_to_host(unidirectional_path, local_mpls_label, sector_mpls_label, source_ipv4):
@@ -502,9 +528,19 @@ def __ipv4_flow_activation_sector_to_host(unidirectional_path, local_mpls_label,
     switches_info = unidirectional_path.switches_info
     sector_entity_obj = sector.query_entity(sector_entity_id)
     host_entity_obj = sector.query_entity(host_entity_id)
+    mapped_ipv4_services = globals.mapped_services["IPv4"]["*"]
 
     assert isinstance(sector_entity_obj, Sector), "sector_entity_obj type is not Sector"
     assert isinstance(host_entity_obj, Host), "host_entity_obj type is not Host"
+
+    # Checking if IPv4 generic service is already established
+    if (source_ipv4, host_entity_obj.ipv4) in mapped_ipv4_services:
+        raise Exception(
+            "IPv4 service for generic traffic from {:s} to {:s}, already exists.".format(
+                str(source_ipv4), str(host_entity_obj.ipv4),
+            )
+        )
+
 
     if len(switches_info) == 1:
         # If the hosts are connected to the same switch, there's no need to create an MPLS tunnel.
@@ -710,7 +746,10 @@ def __ipv4_flow_activation_sector_to_host(unidirectional_path, local_mpls_label,
         )
         ###############################
 
-    return __GenericIPv4Service(unidirectional_path, tunnel_flows, local_mpls_label)
+    # Registering the established service
+    ipv4_service = __GenericIPv4Service(unidirectional_path, tunnel_flows, local_mpls_label)
+    mapped_ipv4_services[(source_ipv4, host_entity_obj.ipv4)] = ipv4_service
+    return ipv4_service
 
 
 __activators = {
@@ -741,7 +780,6 @@ def ipv4_generic_flow_activation(unidirectional_path,  *args, **kwargs):
 
     host_a_entity_obj = sector.query_entity(unidirectional_path.entity_a)
     host_b_entity_obj = sector.query_entity(unidirectional_path.entity_b)
-    mapped_ipv4_services = globals.mapped_services["IPv4"]["*"]
 
     if (type(host_a_entity_obj), type(host_b_entity_obj)) not in __activators:
         raise TypeError(
@@ -752,20 +790,6 @@ def ipv4_generic_flow_activation(unidirectional_path,  *args, **kwargs):
             )
         )
 
-    # Checking if IPv4 generic service is already established
-    if (host_a_entity_obj.id, host_b_entity_obj.id) in mapped_ipv4_services:
-        raise Exception(
-            "IPv4 service for generic traffic from {:s} to {:s}, already exists.".format(
-                str(host_a_entity_obj.id,), str(host_b_entity_obj.id)
-            )
-        )
-
     # Attempt to activate the service
-    ipv4_service = __activators[(type(host_a_entity_obj), type(host_b_entity_obj))](
-        unidirectional_path,  *args, **kwargs
-    )
+    return __activators[(type(host_a_entity_obj), type(host_b_entity_obj))](unidirectional_path,  *args, **kwargs)
 
-    # Registering the established service
-    mapped_ipv4_services[(host_a_entity_obj.id, host_b_entity_obj.id)] = ipv4_service
-
-    return ipv4_service
