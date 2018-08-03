@@ -156,12 +156,12 @@ def process_event(dp_event):
 
         for network_service in globals.mapped_services:
             for service_type in globals.mapped_services[network_service]:
-                for entities_ids_pair in tuple(globals.mapped_services[network_service][service_type]):
-                    scenario = globals.mapped_services[network_service][service_type][entities_ids_pair]
+                for service_key in tuple(globals.mapped_services[network_service][service_type]):
+                    scenario = globals.mapped_services[network_service][service_type][service_key]
 
                     if scenario.has_entity(datapath_id):
                         local_scenarios_to_kill.append(scenario)
-                        del globals.mapped_services[network_service][service_type][entities_ids_pair]
+                        del globals.mapped_services[network_service][service_type][service_key]
 
         _log.debug(
             "Local Scenarios to be destroyed: {:s}".format(

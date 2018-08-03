@@ -116,14 +116,14 @@ def process_event(port_change_event):
 
                     for network_service in globals.mapped_services:
                         for service_type in globals.mapped_services[network_service]:
-                            for entities_ids_pair in tuple(globals.mapped_services[network_service][service_type]):
-                                scenario = globals.mapped_services[network_service][service_type][entities_ids_pair]
+                            for service_key in tuple(globals.mapped_services[network_service][service_type]):
+                                scenario = globals.mapped_services[network_service][service_type][service_key]
 
                                 if scenario.uses_edge(datapath_id, connected_entity_id, port_no):
                                     local_scenarios_to_kill.append(scenario)
-                                    del globals.mapped_services[network_service][service_type][entities_ids_pair]
+                                    del globals.mapped_services[network_service][service_type][service_key]
 
-                    _log.debug(
+                    _log.info(
                         "Local Scenarios to be destroyed: {:s}".format(
                             str(tuple((str(i) for i in local_scenarios_to_kill)))
                         )
@@ -142,7 +142,7 @@ def process_event(port_change_event):
 
                         for sector_id in adjacent_sectors_ids:
                             sector_proxy = p2p.get_controller_proxy(sector_id)
-                            _log.debug(
+                            _log.info(
                                 "Contacting Sector {:s} to destroy path {:s}...".format(
                                     str(sector_id),
                                     str(global_path_search_id)
@@ -154,7 +154,7 @@ def process_event(port_change_event):
                                     "requesting_sector_id": str(this_controller_id)
                                 }
                             )
-                            _log.debug(
+                            _log.info(
                                 "Sector {:s} answer is: {:s}".format(
                                     str(sector_id),
                                     str(res)
@@ -219,14 +219,14 @@ def process_event(port_change_event):
 
                             for network_service in globals.mapped_services:
                                 for service_type in globals.mapped_services[network_service]:
-                                    for entities_ids_pair in tuple(globals.mapped_services[network_service][service_type]):
-                                        scenario = globals.mapped_services[network_service][service_type][entities_ids_pair]
+                                    for service_key in tuple(globals.mapped_services[network_service][service_type]):
+                                        scenario = globals.mapped_services[network_service][service_type][service_key]
 
                                         if scenario.uses_edge(datapath_id, connected_entity_id, port_no):
                                             local_scenarios_to_kill.append(scenario)
-                                            del globals.mapped_services[network_service][service_type][entities_ids_pair]
+                                            del globals.mapped_services[network_service][service_type][service_key]
 
-                            _log.debug(
+                            _log.info(
                                 "Local Scenarios to be destroyed: {:s}".format(
                                     str(tuple((id(i) for i in local_scenarios_to_kill)))
                                 )
@@ -239,7 +239,7 @@ def process_event(port_change_event):
                                     if id(scenario) in local_scenarios_ids_list:
                                         global_scenarios_to_kill.append(global_path_search_id)
 
-                            _log.debug(
+                            _log.info(
                                 "Global Scenarios to be destroyed: {:s}".format(
                                     str(tuple((str(i) for i in global_scenarios_to_kill)))
                                 )
@@ -250,7 +250,7 @@ def process_event(port_change_event):
 
                                 for sector_id in adjacent_sectors_ids:
                                     sector_proxy = p2p.get_controller_proxy(sector_id)
-                                    _log.debug(
+                                    _log.info(
                                         "Contacting Sector {:s} to destroy path {:s}...".format(
                                             str(sector_id),
                                             str(global_path_search_id)
@@ -262,7 +262,7 @@ def process_event(port_change_event):
                                             "requesting_sector_id": str(this_controller_id)
                                         }
                                     )
-                                    _log.debug(
+                                    _log.info(
                                         "Sector {:s} answer is: {:s}".format(
                                             str(sector_id),
                                             str(res)
