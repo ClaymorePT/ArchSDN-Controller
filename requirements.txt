@@ -3,3 +3,4 @@ networkx==2.1
 blosc==1.5.1
 ryu==4.26
 scapy-python3==0.25
+pyzmq==17.1.2
