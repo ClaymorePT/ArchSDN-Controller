@@ -62,10 +62,8 @@ TABLE_MISS_PRIORITY = 0
 # Flows Timeout
 ICMPV4_FLOW_TIMEOUT = 5
 
-
 # Default kernel configuration
 default_configs = None
-
 
 # Sector QValues
 QValues = {}  # QValues[chosen_link][IPv4/IPv6] = Q-Value
@@ -132,9 +130,11 @@ def set_q_value(choice, host_address, q_value):
     else:
         QValues[choice][host_address] = q_value
 
+
 def calculate_new_qvalue(old_value, forward_value, reward):
     assert isinstance(old_value, int) or isinstance(old_value, float), "old_value expected to be int or float"
-    assert isinstance(forward_value, int) or isinstance(forward_value, float), "forward_value expected to be int or float"
+    assert isinstance(forward_value, int) or isinstance(forward_value, float), \
+        "forward_value expected to be int or float"
     assert isinstance(reward, int) or isinstance(reward, float), "reward expected to be int or float"
 
     return old_value + q_alpha * (reward + q_beta*forward_value - old_value)
@@ -161,7 +161,7 @@ class __ImplementationTask():
         }
     }
 
-    def __init__(self, taskID, first_layer, second_layer="*"):
+    def __init__(self, task_id, first_layer, second_layer="*"):
         self.__first_layer = None
         self.__second_layer = None
         self.__taskID = None
@@ -172,13 +172,13 @@ class __ImplementationTask():
         if second_layer not in __class__.__scenario_implementation_tasks[first_layer]:
             raise AttributeError("second_layer argument is invalid.")
 
-        if taskID in __class__.__scenario_implementation_tasks[first_layer][second_layer]:
+        if task_id in __class__.__scenario_implementation_tasks[first_layer][second_layer]:
             raise ImplementationTaskExists()
 
         self.__first_layer = first_layer
         self.__second_layer = second_layer
-        self.__taskID = taskID
-        __class__.__scenario_implementation_tasks[first_layer][second_layer].add(taskID)
+        self.__taskID = task_id
+        __class__.__scenario_implementation_tasks[first_layer][second_layer].add(task_id)
 
     def __del__(self):
         if self.__taskID:
