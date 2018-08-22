@@ -250,7 +250,7 @@ def activate_icmpv4_scenario(scenario_request):
                         )
                     )
 
-                    _log.debug(
+                    _log.info(
                         "Local Scenario with global ID {:s} with local length {:d} is now active.".format(
                             str(global_path_search_id),
                             len(bidirectional_path)
