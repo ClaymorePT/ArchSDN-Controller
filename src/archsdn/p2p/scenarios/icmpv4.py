@@ -4,7 +4,7 @@ import logging
 
 from uuid import UUID
 from ipaddress import IPv4Address
-from random import random, sample
+from random import sample
 
 from archsdn.helpers import logger_module_name, custom_logging_callback
 
@@ -35,7 +35,8 @@ def activate_icmpv4_scenario(scenario_request):
     global_path_search_id = scenario_request['global_path_search_id']
     sector_requesting_service_id = UUID(scenario_request['sector_requesting_service'])
     scenario_mpls_label = scenario_request['mpls_label']
-    scenario_hash_val = scenario_request['hash_val'] # hash value which identifies the switch that sends the traffic
+    scenario_hash_val = scenario_request['hash_val']  # hash value which identifies the switch that sends the traffic
+    path_exploration = scenario_request['path_exploration']
     source_ipv4 = IPv4Address(global_path_search_id[1])
     target_ipv4_str = global_path_search_id[2]
     target_ipv4 = IPv4Address(global_path_search_id[2])
@@ -105,7 +106,6 @@ def activate_icmpv4_scenario(scenario_request):
             # The possible communication links to the target sector
             selected_link = None
             bidirectional_path = None
-            path_exploration = False
 
             possible_links = []
             for adjacent_sector in adjacent_sectors_ids:
@@ -133,13 +133,12 @@ def activate_icmpv4_scenario(scenario_request):
                 if len(links_never_used):
                     selected_link = links_never_used[0]
                 else:
-                    if random() > globals.EXPLORATION_PROBABILITY:
+                    if path_exploration:
                         selected_link = max(
                             possible_links,
                             key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                         )
                     else:
-                        path_exploration = True
                         selected_link = sample(possible_links, 1)[0]
 
                 possible_links.remove(selected_link)
@@ -184,6 +183,7 @@ def activate_icmpv4_scenario(scenario_request):
                             "sector_requesting_service": str(this_controller_id),
                             "mpls_label": local_mpls_label,
                             "hash_val": globals.get_hash_val(*chosen_edge),
+                            "path_exploration": path_exploration,
                         }
                     )
                 except Exception as ex:

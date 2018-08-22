@@ -3,7 +3,7 @@ import sys
 import logging
 from ipaddress import IPv4Address
 import time
-from random import random, sample
+from random import sample
 
 from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, ICMP
@@ -154,7 +154,7 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                     adjacent_sectors_ids = sector.query_sectors_ids()
                     selected_link = None
                     unidirectional_path = None
-                    path_exploration = False
+                    path_exploration = globals.should_explore()
 
                     if len(adjacent_sectors_ids) == 0:
                         raise PathNotFound("No adjacent sectors available.")
@@ -188,13 +188,12 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                         if len(links_never_used):
                             selected_link = links_never_used[0]
                         else:
-                            if random() > globals.EXPLORATION_PROBABILITY:
+                            if path_exploration:
                                 selected_link = max(
                                     possible_links,
                                     key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                                 )
                             else:
-                                path_exploration = True
                                 selected_link = sample(possible_links, 1)[0]
 
                         possible_links.remove(selected_link)   # Remove the selected link from the choice list
@@ -236,6 +235,7 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                                     "sector_requesting_service": str(controller_uuid),
                                     "mpls_label": local_mpls_label,
                                     "hash_val": globals.get_hash_val(*chosen_edge),
+                                    "path_exploration": path_exploration,
                                 }
                             )
                         except Exception as ex:
