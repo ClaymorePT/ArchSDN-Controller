@@ -10,4 +10,8 @@ class Service(ABC):
     def has_entity(self, entity_id):
         pass
 
+    @abstractmethod
+    def has_flow(self, cookie_id):
+        pass
+
 

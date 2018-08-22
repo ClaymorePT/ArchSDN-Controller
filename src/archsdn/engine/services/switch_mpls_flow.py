@@ -46,6 +46,9 @@ class __MPLSService(Service):
                 )
         globals.free_mpls_label_id(self.__mpls_label)
 
+    def __str__(self):
+        return "MPLS Service at 0x{:x}".format(id(self))
+
     @property
     def label(self):
         return self.__mpls_label
@@ -55,6 +58,13 @@ class __MPLSService(Service):
 
     def has_entity(self, entity_id):
         return self.__local_path.has_entity(entity_id)
+
+    def has_flow(self, cookie_id):
+        for flow_set in self.__scenario_flows:
+            for flow in flow_set:
+                if flow.cookie == cookie_id:
+                    return True
+        return False
 
     @property
     def service_q_value(self):

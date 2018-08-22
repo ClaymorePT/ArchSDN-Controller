@@ -165,13 +165,15 @@ __all__ = [
     'process_datapath_event',
     'process_packet_in_event',
     'process_port_change_event',
+    'process_flow_removed_event',
 ]
 
 from archsdn.engine import sector
 from archsdn.engine.datapath_events import \
     process_datapath_event, \
     process_packet_in_event, \
-    process_port_change_event
+    process_port_change_event, \
+    process_flow_removed_event
 
 
 def initialise(default_configs):

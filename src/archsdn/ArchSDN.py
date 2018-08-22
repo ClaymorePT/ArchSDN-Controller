@@ -243,7 +243,15 @@ class ArchSDN(RyuApp):
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
+    @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
+    def flow_removed_event(self, ev):
 
+        try:
+            _log.debug("flow_removed_event: {:s}".format(str(ev)))
+            engine.process_flow_removed_event(ev)
+
+        except Exception:
+            custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
 
 
 

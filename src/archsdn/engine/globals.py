@@ -59,6 +59,9 @@ FOREIGN_HOST_TABLE_VLAN_PRIORITY = 1000
 
 TABLE_MISS_PRIORITY = 0
 
+# Flows Timeout
+ICMPV4_FLOW_TIMEOUT = 5
+
 
 # Default kernel configuration
 default_configs = None

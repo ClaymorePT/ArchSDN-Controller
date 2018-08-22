@@ -45,6 +45,9 @@ class __ICMPv4Service(Service):
         if self.__mpls_label:
             globals.free_mpls_label_id(self.__mpls_label)
 
+    def __str__(self):
+        return "ICMPv4 Service at 0x{:x}".format(id(self))
+
     @property
     def label(self):
         return self.__mpls_label
@@ -54,6 +57,13 @@ class __ICMPv4Service(Service):
 
     def has_entity(self, entity_id):
         return self.__bidirectional_path.has_entity(entity_id)
+
+    def has_flow(self, cookie_id):
+        for flow_set in self.__scenario_flows:
+            for flow in flow_set:
+                if flow.cookie == cookie_id:
+                    return True
+        return False
 
     @property
     def service_q_value(self):
@@ -96,6 +106,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
+            idle_timeout=globals.ICMPV4_FLOW_TIMEOUT,
+            flags=single_switch_ofp.OFPFF_SEND_FLOW_REM,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4),
@@ -217,6 +229,8 @@ def __icmpv4_flow_activation_host_to_host(bidirectional_path, mpls_label):
             table_id=globals.HOST_FILTERING_TABLE,
             command=side_a_switch_ofp.OFPFC_ADD,
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
+            idle_timeout=globals.ICMPV4_FLOW_TIMEOUT,
+            flags=side_a_switch_ofp.OFPFF_SEND_FLOW_REM,
             match=side_a_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_a_entity_obj.ipv4), ipv4_dst=str(host_b_entity_obj.ipv4),
@@ -467,6 +481,8 @@ def __icmpv4_flow_activation_host_to_sector(
             table_id=globals.HOST_FILTERING_TABLE,
             command=single_switch_ofp.OFPFC_ADD,
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
+            idle_timeout=globals.ICMPV4_FLOW_TIMEOUT,
+            flags=single_switch_ofp.OFPFF_SEND_FLOW_REM,
             match=single_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_entity_obj.ipv4), ipv4_dst=str(target_ipv4),
@@ -617,6 +633,8 @@ def __icmpv4_flow_activation_host_to_sector(
             table_id=globals.HOST_FILTERING_TABLE,
             command=local_host_side_switch_ofp.OFPFC_ADD,
             priority=globals.HOST_TABLE_LAYER_4_SPECIFIC_PRIORITY,
+            idle_timeout=globals.ICMPV4_FLOW_TIMEOUT,
+            flags=local_host_side_switch_ofp.OFPFF_SEND_FLOW_REM,
             match=local_host_side_switch_ofp_parser.OFPMatch(
                 eth_type=ether.ETH_TYPE_IP,
                 ipv4_src=str(host_entity_obj.ipv4), ipv4_dst=str(target_ipv4),
