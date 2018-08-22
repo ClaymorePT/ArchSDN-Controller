@@ -69,6 +69,7 @@ default_configs = None
 QValues = {}  # QValues[chosen_link][IPv4/IPv6] = Q-Value
 q_alpha = 0.9
 q_beta = 0.1
+EXPLORATION_PROBABILITY = 0.25  # Floating point value between 0 and 1
 
 # Known Shortest Path Length to target
 kspl = {}  # kspl[chosen_link][IPv4/IPv6] = minimum length

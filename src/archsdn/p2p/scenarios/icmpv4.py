@@ -4,6 +4,7 @@ import logging
 
 from uuid import UUID
 from ipaddress import IPv4Address
+from random import random, sample
 
 from archsdn.helpers import logger_module_name, custom_logging_callback
 
@@ -104,6 +105,8 @@ def activate_icmpv4_scenario(scenario_request):
             # The possible communication links to the target sector
             selected_link = None
             bidirectional_path = None
+            path_exploration = False
+
             possible_links = []
             for adjacent_sector in adjacent_sectors_ids:
                 for edge in sector.query_edges_to_sector(adjacent_sector):
@@ -130,10 +133,14 @@ def activate_icmpv4_scenario(scenario_request):
                 if len(links_never_used):
                     selected_link = links_never_used[0]
                 else:
-                    selected_link = max(
-                        possible_links,
-                        key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
-                    )
+                    if random() > globals.EXPLORATION_PROBABILITY:
+                        selected_link = max(
+                            possible_links,
+                            key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
+                        )
+                    else:
+                        path_exploration = True
+                        selected_link = sample(possible_links, 1)[0]
 
                 possible_links.remove(selected_link)
                 chosen_edge = selected_link[0:2]
@@ -233,11 +240,13 @@ def activate_icmpv4_scenario(scenario_request):
                         "Old Q-Value: {:f}; "
                         "New Q-Value: {:f}; "
                         "Reward: {:f}; "
-                        "Forward Q-Value: {:f}."
-                        "KSPL: {:d};"
+                        "Forward Q-Value: {:f}; "
+                        "KSPL: {:d}; "
+                        "Path Exploration: {:s}"
                         "".format(
                             str(selected_sector_id), str(chosen_edge),
-                            old_q_value, new_q_value, reward, forward_q_value, kspl
+                            old_q_value, new_q_value, reward, forward_q_value, kspl,
+                            "True" if path_exploration else "False"
                         )
                     )
 
@@ -267,10 +276,12 @@ def activate_icmpv4_scenario(scenario_request):
                         "Old Q-Value: {:f}; "
                         "New Q-Value: {:f}; "
                         "Reward: {:f}; "
-                        "Forward Q-Value: {:f}."
+                        "Forward Q-Value: {:f}; "
+                        "Path Exploration: {:s}."
                         "".format(
                             str(selected_sector_id), str(chosen_edge),
-                            old_q_value, new_q_value, -1, forward_q_value
+                            old_q_value, new_q_value, -1, forward_q_value,
+                            "True" if path_exploration else "False"
                         )
                     )
 
