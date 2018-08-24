@@ -4,6 +4,7 @@ import logging
 from ipaddress import IPv4Address
 import time
 from random import sample
+from copy import deepcopy
 
 from scapy.packet import Raw
 from scapy.layers.l2 import Ether
@@ -22,7 +23,7 @@ from archsdn import p2p
 from archsdn.engine.exceptions import PathNotFound
 
 _log = logging.getLogger(logger_module_name(__file__))
-
+experimental_data = {}
 
 def process_icmpv4_packet(packet_in_event):
     assert globals.default_configs, "engine not initialised"
@@ -164,7 +165,7 @@ def process_icmpv4_packet(packet_in_event):
             #  process which will implement the cross-sector ICMP service between the hosts.
             # Query host info details directly from foreign sector
 
-            def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id, task_token):
+            def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id, task_token, original_pkt, datapath_obj):
                 # Warning!!! task_token is not a useless argument. The task token exists only to signal
                 #   the existence of a task execution. Once task_token goes out of context,
                 #   the token is destroyed.
@@ -262,7 +263,11 @@ def process_icmpv4_packet(packet_in_event):
                                 }
                             )
                         except Exception as ex:
-                            service_activation_result = {"success": False, "reason": str(ex)}
+                            globals.free_mpls_label_id(local_mpls_label)
+                            _log.debug("Sector {:s} returned the following error: {:s}".format(str(ex)))
+                            if len(possible_links) == 0:
+                                raise PathNotFound("All links to adjacent sectors have been tried.")
+                            continue  # Go back to the beginning of the cycle and try again with a new link
 
                         forward_q_value = 0 if "q_value" not in service_activation_result else \
                             service_activation_result["q_value"]
@@ -336,6 +341,22 @@ def process_icmpv4_packet(packet_in_event):
                                     time.time() - start_time,
                                     len(bidirectional_path) + service_activation_result["path_length"],
                                     len(bidirectional_path)
+                                )
+                            )
+
+                            # Reinsert the ICMPv4 packet into the OpenFlow Pipeline, in order to properly process it.
+                            datapath_obj.send_msg(
+                                datapath_obj.ofproto_parser.OFPPacketOut(
+                                    datapath=datapath_obj,
+                                    buffer_id=datapath_obj.ofproto.OFP_NO_BUFFER,
+                                    in_port=p_in_port,
+                                    actions=[
+                                        datapath_obj.ofproto_parser.OFPActionOutput(
+                                            port=datapath_obj.ofproto.OFPP_TABLE,
+                                            max_len=len(original_pkt)
+                                        ),
+                                    ],
+                                    data=original_pkt
                                 )
                             )
                             break
@@ -412,7 +433,9 @@ def process_icmpv4_packet(packet_in_event):
                         datapath_id,
                         pkt_in_port,
                         global_path_search_id,
-                        globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP")
+                        globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP"),
+                        deepcopy(msg.data),
+                        msg.datapath
                     )
 
             except globals.ImplementationTaskExists:

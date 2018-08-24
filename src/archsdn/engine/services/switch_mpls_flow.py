@@ -21,29 +21,29 @@ class __MPLSService(Service):
     def __del__(self):
         flows = []
         for flow_set in self.__scenario_flows:
-            flows = flows + list(flow_set)
-        for flow in flows:
-            switch_obj = globals.get_datapath_obj(flow.datapath.id)
-            if switch_obj.is_active:
-                switch_ofp_parser = switch_obj.ofproto_parser
-                switch_ofp = switch_obj.ofproto
-                _log.debug("Removing flow with cookie ID 0x{:x}.".format(flow.cookie))
+            for flow in flow_set:
+                switch_obj = globals.get_datapath_obj(flow.datapath.id)
+                if switch_obj.is_active:
+                    switch_ofp_parser = switch_obj.ofproto_parser
+                    switch_ofp = switch_obj.ofproto
+                    _log.debug("Removing flow with cookie ID 0x{:x}.".format(flow.cookie))
 
-                switch_obj.send_msg(  # Removes the registered flow from this switch.
-                    switch_ofp_parser.OFPFlowMod(
-                        datapath=switch_obj,
-                        cookie=flow.cookie,
-                        cookie_mask=0xFFFFFFFFFFFFFFFF,
-                        table_id=switch_ofp.OFPTT_ALL,
-                        command=switch_ofp.OFPFC_DELETE,
-                        out_port=switch_ofp.OFPP_ANY,
-                        out_group=switch_ofp.OFPG_ANY,
+                    switch_obj.send_msg(  # Removes the registered flow from this switch.
+                        switch_ofp_parser.OFPFlowMod(
+                            datapath=switch_obj,
+                            cookie=flow.cookie,
+                            cookie_mask=0xFFFFFFFFFFFFFFFF,
+                            table_id=switch_ofp.OFPTT_ALL,
+                            command=switch_ofp.OFPFC_DELETE,
+                            out_port=switch_ofp.OFPP_ANY,
+                            out_group=switch_ofp.OFPG_ANY,
+                        )
                     )
-                )
-                globals.send_msg(
-                    switch_ofp_parser.OFPBarrierRequest(switch_obj),
-                    reply_cls=switch_ofp_parser.OFPBarrierReply
-                )
+                    globals.send_msg(
+                        switch_ofp_parser.OFPBarrierRequest(switch_obj),
+                        reply_cls=switch_ofp_parser.OFPBarrierReply
+                    )
+                globals.free_cookie_id(flow.cookie)
         globals.free_mpls_label_id(self.__mpls_label)
 
     def __str__(self):
@@ -177,6 +177,9 @@ def __bidirectional_mpls_flow_activation(
         #  Tunnel implementation at path core switches
         mpls_tunnel_flows = []
         for (middle_switch_id, switch_in_port, switch_out_port) in switches_info[1:-1]:
+            assert isinstance(middle_switch_id, int), "middle_switch_id expected to be int. Got {:s}".format(
+                repr(middle_switch_id)
+            )
             middle_switch_obj = globals.get_datapath_obj(middle_switch_id)
             middle_switch_ofp_parser = middle_switch_obj.ofproto_parser
             middle_switch_ofp = middle_switch_obj.ofproto

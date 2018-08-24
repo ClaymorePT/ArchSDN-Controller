@@ -239,7 +239,11 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                                 }
                             )
                         except Exception as ex:
-                            service_activation_result = {"success": False, "reason": str(ex)}
+                            globals.free_mpls_label_id(local_mpls_label)
+                            _log.debug("Sector {:s} returned the following error: {:s}".format(str(ex)))
+                            if len(possible_links) == 0:
+                                raise PathNotFound("All links to adjacent sectors have been tried.")
+                            continue  # Go back to the beginning of the cycle and try again with a new link
 
                         forward_q_value = 0 if "q_value" not in service_activation_result else \
                             service_activation_result["q_value"]

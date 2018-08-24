@@ -42,6 +42,7 @@ class __ICMPv4Service(Service):
                         switch_ofp_parser.OFPBarrierRequest(switch_obj),
                         reply_cls=switch_ofp_parser.OFPBarrierReply
                     )
+                globals.free_cookie_id(flow.cookie)
         if self.__mpls_label:
             globals.free_mpls_label_id(self.__mpls_label)
 
