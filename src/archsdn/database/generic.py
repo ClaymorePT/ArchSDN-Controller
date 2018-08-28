@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 from copy import deepcopy
 
 from .exceptions import DatabaseError
-from ...database import data
+from ..database import data
 
 _log = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ class FakeSemaphore():
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
+
 
 def initialise(location=":memory:", controller_id=None):
     assert (isinstance(location, Path) and location.cwd().exists()) or\
@@ -45,11 +46,6 @@ def initialise(location=":memory:", controller_id=None):
 
     elif isinstance(location, Path):
         raise DatabaseError("Only memory database is supported.")
-        # if location.exists():
-        #     _log.info("Database exists! Using it and ignoring id present in config file")
-        #
-        # else:
-        #     _log.info("Initializing Database in File at {:s}".format(str(location)))
 
     _log.info(
         "database with UUID {:s} created in {:s}".format(

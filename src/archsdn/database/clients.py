@@ -6,9 +6,10 @@ from copy import deepcopy
 
 from .exceptions import ClientNotRegistered, ClientAlreadyRegistered, AddressNotRegistered
 
-from ...database import data
+from ..database import data
 
 _log = logging.getLogger(__name__)
+
 
 def query_info(client_id):
     assert isinstance(client_id, int), "client_id is not int"

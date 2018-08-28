@@ -11,12 +11,12 @@ _service_reservation_policies = {}
 
 
 def update_volatile_information(
-        ipv4_network = None,
-        ipv6_network = None,
-        ipv4_service = None,
-        ipv6_service = None,
-        mac_service  = None,
-        service_reservation_policies = None
+        ipv4_network=None,
+        ipv6_network=None,
+        ipv4_service=None,
+        ipv6_service=None,
+        mac_service=None,
+        service_reservation_policies=None
 ):
     global _ipv4_network, _ipv6_network, _ipv4_service, _ipv6_service, _mac_service, _service_reservation_policies
     assert not (ipv4_network is None and

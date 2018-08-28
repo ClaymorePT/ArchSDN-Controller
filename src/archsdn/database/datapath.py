@@ -6,9 +6,10 @@ from copy import deepcopy
 from .exceptions import DatapathNotRegistered, DatapathAlreadyRegistered, DatabaseError
 from .data_validation import is_ipv4_port_tuple, is_ipv6_port_tuple
 
-from ...database import data
+from ..database import data
 
 _log = logging.getLogger(__name__)
+
 
 def query_info(datapath_id):
     assert isinstance(datapath_id, int), "datapath_id is not int"
