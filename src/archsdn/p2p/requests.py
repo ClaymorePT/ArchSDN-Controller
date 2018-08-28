@@ -32,14 +32,6 @@ def __activate_scenario(scenario_request):
         raise TypeError("The following arguments are missing: {:s}".format(", ".join(missing_args)))
 
     global_path_search_id = scenario_request['global_path_search_id']
-    scenario_mpls_label = scenario_request['mpls_label']
-    scenario_hash_val = scenario_request['hash_val']  # hash value which identifies the switch that sends the traffic
-
-    assert isinstance(scenario_mpls_label, int) and scenario_mpls_label >= 0, \
-        "scenario_mpls_label expected to be non negative  int"
-    assert isinstance(scenario_hash_val, int) and scenario_hash_val >= 0, \
-        "scenario_hash_val expected to be non negative int"
-
     source_controller_id = UUID(global_path_search_id[0])
     scenario_type = global_path_search_id[3]
     this_controller_id = database.get_database_info()['uuid']
