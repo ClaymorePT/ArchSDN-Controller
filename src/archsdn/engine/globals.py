@@ -155,45 +155,45 @@ class ImplementationTaskExists(Exception):
     pass
 
 
-class __ImplementationTask():
-    __scenario_implementation_tasks = {
-        "IPv4": {
-            "ICMP": set(),
-            # "UDP": set(), # TODO: Implement specific UDP scenario flows
-            # "TCP": set(), # TODO: Implement specific TCP scenario flows
-            "*": set(),
-        },
-        "MPLS": {
-            "*": set()
-        }
+_scenario_implementation_tasks = {
+    "IPv4": {
+        "ICMP": set(),
+        # "UDP": set(), # TODO: Implement specific UDP scenario flows
+        # "TCP": set(), # TODO: Implement specific TCP scenario flows
+        "*": set(),
+    },
+    "MPLS": {
+        "*": set()
     }
+}
+_tasks_sem = Semaphore(value=1)
+
+
+class __ImplementationTask():
 
     def __init__(self, task_id, first_layer, second_layer="*"):
-        self.__first_layer = None
-        self.__second_layer = None
-        self.__taskID = None
-
-        if first_layer not in __class__.__scenario_implementation_tasks:
-            raise AttributeError("first_layer argument is invalid.")
-
-        if second_layer not in __class__.__scenario_implementation_tasks[first_layer]:
-            raise AttributeError("second_layer argument is invalid.")
-
-        if task_id in __class__.__scenario_implementation_tasks[first_layer][second_layer]:
-            raise ImplementationTaskExists()
-
         self.__first_layer = first_layer
         self.__second_layer = second_layer
         self.__taskID = task_id
-        __class__.__scenario_implementation_tasks[first_layer][second_layer].add(task_id)
 
     def __del__(self):
-        if self.__taskID:
-            __class__.__scenario_implementation_tasks[self.__first_layer][self.__second_layer].remove(self.__taskID)
+        with _tasks_sem:
+            _scenario_implementation_tasks[self.__first_layer][self.__second_layer].remove(self.__taskID)
 
 
-def register_implementation_task(*args, **kwargs):
-    return __ImplementationTask(*args, **kwargs)
+def register_implementation_task(task_id, first_layer, second_layer="*"):
+    with _tasks_sem:
+        if first_layer not in _scenario_implementation_tasks:
+            raise AttributeError("first_layer argument is invalid.")
+
+        if second_layer not in _scenario_implementation_tasks[first_layer]:
+            raise AttributeError("second_layer argument is invalid.")
+
+        if task_id in _scenario_implementation_tasks[first_layer][second_layer]:
+            raise ImplementationTaskExists()
+
+        _scenario_implementation_tasks[first_layer][second_layer].add(task_id)
+        return __ImplementationTask(task_id, first_layer, second_layer)
 
 
 # Topology Discovery Beacons
@@ -261,11 +261,11 @@ def is_scenario_active(key):
         return key in __active_scenarios
 
 
-def delete_active_scenario(key):
-    with __active_scenarios_sem:
-        assert key in __active_scenarios, "scenario not active"
-
-        del __active_scenarios[key]
+# def delete_active_scenario(key):
+#     with __active_scenarios_sem:
+#         assert key in __active_scenarios, "scenario not active"
+#
+#         del __active_scenarios[key]
 
 
 def get_active_scenarios_keys():
