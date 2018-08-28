@@ -23,6 +23,7 @@ from archsdn import p2p
 from archsdn.engine.exceptions import PathNotFound
 
 _log = logging.getLogger(logger_module_name(__file__))
+packet_buffer = {}
 experimental_data = {}
 
 def process_icmpv4_packet(packet_in_event):
@@ -92,6 +93,19 @@ def process_icmpv4_packet(packet_in_event):
             )
         )
     elif pkt_ipv4_dst in ipv4_network:  # If the destination IPv4 belongs to the network.
+        global_path_search_id = (
+            str(controller_uuid),
+            pkt_ipv4_src,
+            pkt_ipv4_dst,
+            "ICMPv4"
+        )
+        if global_path_search_id not in packet_buffer:
+            packet_buffer[global_path_search_id] = []
+        packet_buffer[global_path_search_id].append(deepcopy(msg.data))
+
+        tmp_task_token = globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP")
+
+
         # Opens a bi-directional tunnel to target, using the same path in both directions.
         target_host_not_found_in_sector = False
         try:
@@ -165,7 +179,7 @@ def process_icmpv4_packet(packet_in_event):
             #  process which will implement the cross-sector ICMP service between the hosts.
             # Query host info details directly from foreign sector
 
-            def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id, task_token, original_pkt, datapath_obj):
+            def remote_host_icmpv4_task(dp_id, p_in_port, global_path_search_id, task_token, datapath_obj):
                 # Warning!!! task_token is not a useless argument. The task token exists only to signal
                 #   the existence of a task execution. Once task_token goes out of context,
                 #   the token is destroyed.
@@ -181,7 +195,7 @@ def process_icmpv4_packet(packet_in_event):
                         raise PathNotFound("No adjacent sectors available.")
 
                     # The possible communication links to the target sector
-                    selected_link = None
+                    selected_link = None # TODO: Move these to inside the while cycle
                     bidirectional_path = None
                     path_exploration = globals.should_explore()
 
@@ -213,18 +227,19 @@ def process_icmpv4_packet(packet_in_event):
                             selected_link = links_never_used[0]
                         else:
                             if path_exploration:
+                                selected_link = sample(possible_links, 1)[0]
+                            else:
                                 selected_link = max(
                                     possible_links,
                                     key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                                 )
-                            else:
-                                selected_link = sample(possible_links, 1)[0]
+
                         possible_links.remove(selected_link)
 
                         chosen_edge = selected_link[0:2]
                         selected_sector_id = selected_link[3]
-
-                        _log.debug(
+                        _log.info("{:d} available edges.".format(len(possible_links)))
+                        _log.info(
                             "Selected Link {:s}{:s}".format(
                                 str(selected_link),
                                 " from {}.".format(possible_links) if len(possible_links) else "."
@@ -264,7 +279,10 @@ def process_icmpv4_packet(packet_in_event):
                             )
                         except Exception as ex:
                             globals.free_mpls_label_id(local_mpls_label)
-                            _log.debug("Sector {:s} returned the following error: {:s}".format(str(ex)))
+                            del bidirectional_path  # Destroy previously allocated path and free reservations
+                            _log.info("Sector {:s} returned the following error: {:s}".format(
+                                str(selected_sector_id), str(ex))
+                            )
                             if len(possible_links) == 0:
                                 raise PathNotFound("All links to adjacent sectors have been tried.")
                             continue  # Go back to the beginning of the cycle and try again with a new link
@@ -331,6 +349,20 @@ def process_icmpv4_packet(packet_in_event):
                                 )
                             )
 
+                            time_taken = time.time() - start_time
+                            if pkt_ipv4_dst not in experimental_data:
+                                experimental_data[pkt_ipv4_dst] = []
+
+                            experimental_data[pkt_ipv4_dst].append(
+                                (time_taken, len(bidirectional_path) + service_activation_result["path_length"], path_exploration)
+                            )
+
+                            if len(experimental_data[pkt_ipv4_dst]) == 100:
+                                _log.info(
+                                    "  \n".join((str(data) for data in experimental_data[pkt_ipv4_dst]))
+                                )
+                                experimental_data[pkt_ipv4_dst] = []
+
                             _log.info(
                                 "ICMPv4 Scenario with ID {:s} is now active. "
                                 "Implemented in {:f} seconds. "
@@ -338,26 +370,37 @@ def process_icmpv4_packet(packet_in_event):
                                 "Local Path has length {:d}. "
                                 "".format(
                                     str(global_path_search_id),
-                                    time.time() - start_time,
+                                    time_taken,
                                     len(bidirectional_path) + service_activation_result["path_length"],
                                     len(bidirectional_path)
                                 )
                             )
 
                             # Reinsert the ICMPv4 packet into the OpenFlow Pipeline, in order to properly process it.
-                            datapath_obj.send_msg(
-                                datapath_obj.ofproto_parser.OFPPacketOut(
-                                    datapath=datapath_obj,
-                                    buffer_id=datapath_obj.ofproto.OFP_NO_BUFFER,
-                                    in_port=p_in_port,
-                                    actions=[
-                                        datapath_obj.ofproto_parser.OFPActionOutput(
-                                            port=datapath_obj.ofproto.OFPP_TABLE,
-                                            max_len=len(original_pkt)
-                                        ),
-                                    ],
-                                    data=original_pkt
-                                )
+                            def send_pkts(datapath_obj, p_in_port, global_path_search_id):
+                                hub.sleep(0.1)
+                                while packet_buffer[global_path_search_id]:
+                                    pkt_data = packet_buffer[global_path_search_id].pop()
+                                    datapath_obj.send_msg(
+                                        datapath_obj.ofproto_parser.OFPPacketOut(
+                                            datapath=datapath_obj,
+                                            buffer_id=datapath_obj.ofproto.OFP_NO_BUFFER,
+                                            in_port=p_in_port,
+                                            actions=[
+                                                datapath_obj.ofproto_parser.OFPActionOutput(
+                                                    port=datapath_obj.ofproto.OFPP_TABLE,
+                                                    max_len=len(pkt_data)
+                                                ),
+                                            ],
+                                            data=pkt_data
+                                        )
+                                    )
+                                globals.send_msg(datapath_obj.ofproto_parser.OFPBarrierRequest(datapath_obj),
+                                                 reply_cls=datapath_obj.ofproto_parser.OFPBarrierReply)
+
+                            hub.spawn(
+                                send_pkts,
+                                datapath_obj, p_in_port, global_path_search_id
                             )
                             break
 
@@ -389,12 +432,15 @@ def process_icmpv4_packet(packet_in_event):
                                 )
                             )
 
-                            if len(adjacent_sectors_ids) == 0:
+                            if len(possible_links) == 0:
+                                str_error = "Failed to activate Scenario with ID {:s}. " \
+                                            "All possible links to adjacent sectors have been tried. " \
+                                            "Cannot establish ICMPv4 communication to sector {:s}".format(
+                                                str(global_path_search_id),
+                                                str(target_sector_id)
+                                            )
                                 _log.error(
-                                    "Adjacent sectors alternatives is exhausted. "
-                                    "Cannot establish ICMPv4 communication to sector {:s}".format(
-                                        str(target_sector_id)
-                                    )
+                                    str_error
                                 )
 
                 except central.NoResultsAvailable:
@@ -409,42 +455,24 @@ def process_icmpv4_packet(packet_in_event):
                 except Exception as ex:
                     _log.error("Failed to activate path. Reason {:s}.".format(str(ex)))
                     custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
-
             #  End of Task Definition
 
-            try:
-                global_path_search_id = (
-                    str(controller_uuid),
-                    pkt_ipv4_src,
-                    pkt_ipv4_dst,
-                    "ICMPv4"
+            if globals.is_scenario_active(global_path_search_id):
+                _log.warning(
+                    "ICMPv4 scenario with ID {:s} is already implemented.".format(
+                        str(global_path_search_id)
+                    )
                 )
 
-                if globals.is_scenario_active(global_path_search_id):
-                    _log.warning(
-                        "ICMPv4 scenario with ID {:s} is already implemented.".format(
-                            str(global_path_search_id)
-                        )
-                    )
-
-                else:
-                    hub.spawn(
-                        remote_host_icmpv4_task,
-                        datapath_id,
-                        pkt_in_port,
-                        global_path_search_id,
-                        globals.register_implementation_task(global_path_search_id, "IPv4", "ICMP"),
-                        deepcopy(msg.data),
-                        msg.datapath
-                    )
-
-            except globals.ImplementationTaskExists:
-                    _log.warning(
-                        "ICMPv4 service task is already running for the ipv4 source/target pair "
-                        "({:s}, {:s}).".format(
-                            str(pkt_ipv4_src), str(pkt_ipv4_dst)
-                        )
-                    )
+            else:
+                hub.spawn(
+                    remote_host_icmpv4_task,
+                    datapath_id,
+                    pkt_in_port,
+                    global_path_search_id,
+                    tmp_task_token,
+                    msg.datapath
+                )
 
     else:
         # If the destination IP is in a different network, return ICMPv4 Network Unreachable

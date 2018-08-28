@@ -42,6 +42,7 @@ def activate_icmpv4_scenario(scenario_request):
     target_ipv4 = IPv4Address(global_path_search_id[2])
     target_host_info = central.query_address_info(ipv4=target_ipv4_str)
     this_controller_id = database.get_database_info()['uuid']
+    source_controller = UUID(global_path_search_id[0])
 
     try:
         # Maintain an active token during the duration of this task. When the task is terminated, the token will
@@ -100,6 +101,11 @@ def activate_icmpv4_scenario(scenario_request):
             # Removing from the list of choices, the sector requesting the service
             adjacent_sectors_ids.remove(sector_requesting_service_id)
 
+            # Remove source controller if present
+            if source_controller in adjacent_sectors_ids:
+                adjacent_sectors_ids.remove(source_controller)
+
+
             if len(adjacent_sectors_ids) == 0:
                 return {"success": False, "reason": "No available sectors to explore."}
 
@@ -123,6 +129,10 @@ def activate_icmpv4_scenario(scenario_request):
             )
 
             while possible_links:
+
+                # Socket Cache
+                socket_cache = {}
+
                 # First, lets choose a link to the adjacent sector, according to the q-value
                 links_never_used = tuple(
                     filter(
@@ -134,18 +144,18 @@ def activate_icmpv4_scenario(scenario_request):
                     selected_link = links_never_used[0]
                 else:
                     if path_exploration:
+                        selected_link = sample(possible_links, 1)[0]
+                    else:
                         selected_link = max(
                             possible_links,
                             key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                         )
-                    else:
-                        selected_link = sample(possible_links, 1)[0]
 
                 possible_links.remove(selected_link)
                 chosen_edge = selected_link[0:2]
                 selected_sector_id = selected_link[3]
-
-                _log.debug(
+                _log.info("{:d} available edges.".format(len(possible_links)))
+                _log.info(
                     "Selected Link {:s}{:s}".format(
                         str(selected_link),
                         " from {}.".format(possible_links) if len(possible_links) else "."
@@ -164,7 +174,7 @@ def activate_icmpv4_scenario(scenario_request):
                 except PathNotFound:
                     if len(possible_links) == 0:
                         raise PathNotFound("All links to adjacent sectors have been tried.")
-                    continue
+                    continue  # Go back to the beginning of the cycle and try again with a new link
 
                 assert selected_link is not None, "selected_link cannot be None"
                 assert bidirectional_path is not None, "bidirectional_path cannot be None"
@@ -176,7 +186,10 @@ def activate_icmpv4_scenario(scenario_request):
                 # Allocate MPLS label for tunnel (required when communicating with Sectors)
                 local_mpls_label = globals.alloc_mpls_label_id()
                 try:
-                    selected_sector_proxy = get_controller_proxy(selected_sector_id)
+                    if selected_sector_id not in socket_cache:
+                        socket_cache[selected_sector_id] = get_controller_proxy(selected_sector_id)
+                    selected_sector_proxy = socket_cache[selected_sector_id]
+
                     service_activation_result = selected_sector_proxy.activate_scenario(
                         {
                             "global_path_search_id": global_path_search_id,
@@ -188,7 +201,10 @@ def activate_icmpv4_scenario(scenario_request):
                     )
                 except Exception as ex:
                     globals.free_mpls_label_id(local_mpls_label)
-                    _log.debug("Sector {:s} returned the following error: {:s}".format(str(ex)))
+                    del bidirectional_path  # Destroy previously allocated path and free reservations
+                    _log.debug("Sector {:s} returned the following error: {:s}".format(
+                        str(selected_sector_id), str(ex))
+                    )
                     if len(possible_links) == 0:
                         raise PathNotFound("All links to adjacent sectors have been tried.")
                     continue  # Go back to the beginning of the cycle and try again with a new link
@@ -260,6 +276,7 @@ def activate_icmpv4_scenario(scenario_request):
                             len(bidirectional_path)
                         )
                     )
+                    del active_task_token
                     return {
                         "success": True,
                         "global_path_search_id": global_path_search_id,
@@ -297,20 +314,21 @@ def activate_icmpv4_scenario(scenario_request):
                         )
                     )
 
-                error_str = "Failed to activate Scenario with ID {:s}. " \
-                            "All possible links to adjacent sectors have been tried.".format(
-                                str(global_path_search_id),
-                            )
-                _log.error(error_str)
-                return {
-                    "success": False,
-                    "reason": error_str,
-                }
+            error_str = "Failed to activate Scenario with ID {:s}. " \
+                        "All possible links to adjacent sectors have been tried.".format(
+                            str(global_path_search_id),
+                        )
+            _log.error(error_str)
+            del active_task_token
+            return {
+                "success": False,
+                "reason": error_str,
+            }
 
     except globals.ImplementationTaskExists:
         error_str = "Global task with ID {:s} is already being executed".format(str(global_path_search_id))
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
     except PathNotFound:
@@ -319,7 +337,8 @@ def activate_icmpv4_scenario(scenario_request):
                         str(target_host_info.controller_id)
                     )
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+        del active_task_token
         return {"success": False, "reason": error_str}
 
     except Exception as ex:
@@ -329,7 +348,8 @@ def activate_icmpv4_scenario(scenario_request):
             str(type(ex))
         )
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+        active_task_token = None
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
 
