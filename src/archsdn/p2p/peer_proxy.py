@@ -24,6 +24,8 @@ class __PeerProxy:
 
     def __init__(self, location):
         try:
+            self.__closed = True
+            self.__socket = None
             self.__counter = __class__.__counter
             __class__.__counter += 1
             _log.debug("Initializing communication to peer ({:s}: {:d})".format(str(location), self.__counter))
@@ -31,9 +33,11 @@ class __PeerProxy:
             self.__location = (str(location[0]), location[1])
             self.__stream_client = hub.StreamClient(self.__location)
             self.__socket = self.__stream_client.connect()
-            self.__socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            self.__socket.settimeout(_socket_timeout)
-            self.__closed = False
+            if self.__socket:
+                self.__socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.__socket.settimeout(_socket_timeout)
+                self.__closed = False
 
         except Exception:
             custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
@@ -41,10 +45,12 @@ class __PeerProxy:
 
     def __del__(self):
         _log.debug("Destroying proxy with id: {:d}".format(self.__counter))
-        self.__stream_client.stop()
         if not self.__closed:
-            self.__socket.shutdown(socket.SHUT_RDWR)
-            self.__socket.close()
+            if self.__stream_client is not None:
+                self.__stream_client.stop()
+                self.__socket.shutdown(socket.SHUT_RDWR)
+                self.__socket.close()
+            self.__closed = True
 
     def __getattr__(self, func_name):
         from archsdn.p2p.requests import server_requests
@@ -116,8 +122,10 @@ class __PeerProxy:
 
             except Exception:
                 custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
-                self.__socket.shutdown(socket.SHUT_RDWR)
-                self.__socket.close()
+                if self.__socket is not None:
+                    self.__socket.shutdown(socket.SHUT_RDWR)
+                    self.__socket.close()
+                self.__closed = True
                 raise
         return remote_method_call
 
