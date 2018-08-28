@@ -1,7 +1,6 @@
 
 import sys
 import logging
-
 from uuid import UUID
 from ipaddress import IPv4Address
 from random import sample
@@ -71,7 +70,7 @@ def activate_icmpv4_scenario(scenario_request):
             local_mpls_label = globals.alloc_mpls_label_id()
 
             local_service_scenario = services.icmpv4_flow_activation(
-                bidirectional_path, scenario_mpls_label, local_mpls_label, source_ipv4
+                bidirectional_path, scenario_mpls_label, local_mpls_label, source_ipv4=source_ipv4
             )
             # If it reached here, then it means the path was successfully activated.
             globals.set_active_scenario(
@@ -79,13 +78,14 @@ def activate_icmpv4_scenario(scenario_request):
                 ((id(local_service_scenario),), (sector_requesting_service_id,))
             )
 
-            _log.debug(
+            _log.info(
                 "Local Scenario with Global ID {:s} and local length {:d} is now active.".format(
                     str(global_path_search_id),
                     len(bidirectional_path)
                 )
             )
 
+            active_task_token = None
             return {
                 "success": True,
                 "global_path_search_id": global_path_search_id,
@@ -105,13 +105,8 @@ def activate_icmpv4_scenario(scenario_request):
             if source_controller in adjacent_sectors_ids:
                 adjacent_sectors_ids.remove(source_controller)
 
-
             if len(adjacent_sectors_ids) == 0:
                 return {"success": False, "reason": "No available sectors to explore."}
-
-            # The possible communication links to the target sector
-            selected_link = None
-            bidirectional_path = None
 
             possible_links = []
             for adjacent_sector in adjacent_sectors_ids:
@@ -129,6 +124,9 @@ def activate_icmpv4_scenario(scenario_request):
             )
 
             while possible_links:
+                # The possible communication links to the target sector
+                selected_link = None
+                bidirectional_path = None
 
                 # Socket Cache
                 socket_cache = {}
@@ -151,11 +149,11 @@ def activate_icmpv4_scenario(scenario_request):
                             key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                         )
 
-                possible_links.remove(selected_link)
-                chosen_edge = selected_link[0:2]
-                selected_sector_id = selected_link[3]
-                _log.info("{:d} available edges.".format(len(possible_links)))
-                _log.info(
+                possible_links.remove(selected_link)   # Remove the selected link from the choice list
+                chosen_edge = selected_link[0:2]       # Chosen edge to use
+                selected_sector_id = selected_link[3]  # Sector through which the scenario will proceed
+
+                _log.debug(
                     "Selected Link {:s}{:s}".format(
                         str(selected_link),
                         " from {}.".format(possible_links) if len(possible_links) else "."
@@ -201,7 +199,6 @@ def activate_icmpv4_scenario(scenario_request):
                     )
                 except Exception as ex:
                     globals.free_mpls_label_id(local_mpls_label)
-                    del bidirectional_path  # Destroy previously allocated path and free reservations
                     _log.debug("Sector {:s} returned the following error: {:s}".format(
                         str(selected_sector_id), str(ex))
                     )
@@ -254,15 +251,16 @@ def activate_icmpv4_scenario(scenario_request):
                     )
 
                     _log.info(
-                        "Adjacent Sector: {:s}; "
-                        "Chosen link: {:s}; "
-                        "Updated Q-Values -> "
-                        "Old Q-Value: {:f}; "
-                        "New Q-Value: {:f}; "
-                        "Reward: {:f}; "
-                        "Forward Q-Value: {:f}; "
-                        "KSPL: {:d}; "
-                        "Path Exploration: {:s}"
+                        "\n"
+                        "Selected Sector: {:s}\n"
+                        "Chosen link: {:s}\n"
+                        "Updated Q-Values:\n"
+                        "  Old Q-Value: {:f}\n"
+                        "  New Q-Value: {:f}\n"
+                        "  Reward: {:f}\n"
+                        "  Forward Q-Value: {:f}\n"
+                        "  KSPL: {:d}\n"
+                        "Path Exploration: {:s}."
                         "".format(
                             str(selected_sector_id), str(chosen_edge),
                             old_q_value, new_q_value, reward, forward_q_value, kspl,
@@ -276,7 +274,7 @@ def activate_icmpv4_scenario(scenario_request):
                             len(bidirectional_path)
                         )
                     )
-                    del active_task_token
+                    active_task_token = None
                     return {
                         "success": True,
                         "global_path_search_id": global_path_search_id,
@@ -291,13 +289,14 @@ def activate_icmpv4_scenario(scenario_request):
                     globals.set_q_value(chosen_edge, target_ipv4, new_q_value)
 
                     _log.info(
-                        "Adjacent Sector: {:s}; "
-                        "Chosen link: {:s}; "
-                        "Updated Q-Values -> "
-                        "Old Q-Value: {:f}; "
-                        "New Q-Value: {:f}; "
-                        "Reward: {:f}; "
-                        "Forward Q-Value: {:f}; "
+                        "\n"
+                        "Selected Sector: {:s}\n"
+                        "Chosen link: {:s}\n"
+                        "Updated Q-Values:\n"
+                        "  Old Q-Value: {:f}\n"
+                        "  New Q-Value: {:f}\n"
+                        "  Reward: {:f}\n"
+                        "  Forward Q-Value: {:f}\n"
                         "Path Exploration: {:s}."
                         "".format(
                             str(selected_sector_id), str(chosen_edge),
@@ -315,40 +314,40 @@ def activate_icmpv4_scenario(scenario_request):
                     )
 
             error_str = "Failed to activate Scenario with ID {:s}. " \
-                        "All possible links to adjacent sectors have been tried.".format(
-                            str(global_path_search_id),
-                        )
+                        "All possible links to adjacent sectors have been tried." \
+                        "".format(str(global_path_search_id))
             _log.error(error_str)
-            del active_task_token
+            active_task_token = None
             return {
                 "success": False,
                 "reason": error_str,
             }
 
     except globals.ImplementationTaskExists:
+        active_task_token = None
         error_str = "Global task with ID {:s} is already being executed".format(str(global_path_search_id))
         _log.error(error_str)
         custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
     except PathNotFound:
+        active_task_token = None
         error_str = "Failed to implement path to sector {:s}. " \
                     "An available path was not found in the network.".format(
                         str(target_host_info.controller_id)
                     )
         _log.error(error_str)
         custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
-        del active_task_token
         return {"success": False, "reason": error_str}
 
     except Exception as ex:
+        active_task_token = None
         error_str = "Failed to implement path to host {:s} at sector {:s}. Reason {:s}.".format(
             target_host_info.name,
             str(target_host_info.controller_id),
             str(type(ex))
         )
         _log.error(error_str)
-        active_task_token = None
         custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
