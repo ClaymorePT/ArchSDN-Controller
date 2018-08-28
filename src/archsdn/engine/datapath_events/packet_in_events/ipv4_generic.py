@@ -88,22 +88,28 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
         _log.error("Service Ports are currently not reachable.")
 
     elif pkt_ipv4_dst in ipv4_network:
-        # Opens a unidirectional tunnel to target, using the same path in both directions.
-        target_host_not_found_in_sector = False
 
-        global_path_search_id = (
+        global_path_search_id = (  # The global identification for this service
             str(controller_uuid),
             pkt_ipv4_src,
             pkt_ipv4_dst,
             "IPv4"
         )
 
+        # Create a task token which will represent this execution task in this controller
+        tmp_task_token = globals.register_implementation_task(global_path_search_id, "IPv4", "*")
+
+        # Initialize flag
+        target_host_not_found_in_sector = False
+
+        # Opens a unidirectional tunnel to target, using the same path in both directions.
         try:
             addr_info_dst = database.query_address_info(ipv4=pkt_ipv4_dst)
             target_switch_id = addr_info_dst["datapath"]
             target_switch_port = addr_info_dst["port"]
             host_a_entity_id = sector.query_connected_entity_id(datapath_id, pkt_in_port)
             host_b_entity_id = sector.query_connected_entity_id(target_switch_id, target_switch_port)
+            start_time = time.time()
 
             # Construct a UniDirectional_path Path between Host A and Host B.
             unidirectional_path = sector.construct_unidirectional_path(
@@ -111,14 +117,11 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                 host_b_entity_id
             )
 
-            # Allocate MPLS label for tunnel
-            if len(unidirectional_path) >= 3:
-                mpls_label = globals.alloc_mpls_label_id()
-            else:
-                mpls_label = None
-
             # Activating the Generic IPv4 service between hosts in the same sector.
-            local_service_scenario = services.ipv4_generic_flow_activation(unidirectional_path, mpls_label)
+            local_service_scenario = services.ipv4_generic_flow_activation(
+                unidirectional_path,
+                globals.alloc_mpls_label_id() if len(unidirectional_path) >= 3 else None  # Allocate MPLS label
+            )
 
             globals.set_active_scenario(
                 global_path_search_id,
@@ -127,9 +130,14 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                 )
             )
 
-            _log.warning(
-                "IPv4 data flow opened from host {:s} to host {:s}.".format(
-                    str(host_a_entity_id), str(host_b_entity_id)
+            _log.info(
+                "IPv4 Generic Scenario with ID {:s} is now active. "
+                "Implemented in {:f} seconds. "
+                "Path has length {:d}. "
+                "".format(
+                    str(global_path_search_id),
+                    time.time() - start_time,
+                    len(unidirectional_path)
                 )
             )
 
@@ -152,14 +160,14 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                     host_a_entity_id = sector.query_connected_entity_id(dp_id, p_in_port)
                     target_sector_id = target_host_info.controller_id
                     adjacent_sectors_ids = sector.query_sectors_ids()
-                    selected_link = None
-                    unidirectional_path = None
-                    path_exploration = globals.should_explore()
 
-                    if len(adjacent_sectors_ids) == 0:
+                    if not adjacent_sectors_ids:
                         raise PathNotFound("No adjacent sectors available.")
 
-                    # The possible communication links to the target sector
+                    # Decide if a path should be explored or selected from previous q-values
+                    path_exploration = globals.should_explore()
+
+                    # The possible communication links to the adjacent sectors
                     possible_links = []
                     for adjacent_sector in adjacent_sectors_ids:
                         for edge in sector.query_edges_to_sector(adjacent_sector):
@@ -176,6 +184,13 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                     )
 
                     while possible_links:
+                        # The possible communication links to the target sector
+                        selected_link = None
+                        unidirectional_path = None
+
+                        # Sockets Cache
+                        socket_cache = {}
+
                         # First, lets choose a link to the adjacent sector, according to the q-value
                         links_never_used = tuple(
                             filter(
@@ -189,12 +204,12 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                             selected_link = links_never_used[0]
                         else:
                             if path_exploration:
+                                selected_link = sample(possible_links, 1)[0]
+                            else:
                                 selected_link = max(
                                     possible_links,
                                     key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                                 )
-                            else:
-                                selected_link = sample(possible_links, 1)[0]
 
                         possible_links.remove(selected_link)   # Remove the selected link from the choice list
                         chosen_edge = selected_link[0:2]       # Chosen edge to use
@@ -227,8 +242,11 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
 
                         # Allocate MPLS label for tunnel (required when communicating with Sectors)
                         local_mpls_label = globals.alloc_mpls_label_id()
-                        selected_sector_proxy = p2p.get_controller_proxy(selected_sector_id)
                         try:
+                            if selected_sector_id not in socket_cache:
+                                socket_cache[selected_sector_id] = p2p.get_controller_proxy(selected_sector_id)
+                            selected_sector_proxy = socket_cache[selected_sector_id]
+
                             service_activation_result = selected_sector_proxy.activate_scenario(
                                 {
                                     "global_path_search_id": global_path_search_id,
@@ -240,7 +258,9 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                             )
                         except Exception as ex:
                             globals.free_mpls_label_id(local_mpls_label)
-                            _log.debug("Sector {:s} returned the following error: {:s}".format(str(ex)))
+                            _log.info("Sector {:s} returned the following error: {:s}".format(
+                                str(selected_sector_id), str(ex))
+                            )
                             if len(possible_links) == 0:
                                 raise PathNotFound("All links to adjacent sectors have been tried.")
                             continue  # Go back to the beginning of the cycle and try again with a new link
@@ -279,15 +299,16 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                             globals.set_q_value(chosen_edge, pkt_ipv4_dst, new_q_value)
 
                             _log.info(
-                                "Selected Sector: {:s}; "
-                                "Chosen link: {:s}; "
-                                "Updated Q-Values -> "
-                                "Old Q-Value: {:f}; "
-                                "New Q-Value: {:f}; "
-                                "Reward: {:f}; "
-                                "Forward Q-Value: {:f}; "
-                                "KSPL: {:d}; "
-                                "Path Exploration: {:s}."
+                                "\n"
+                                "Selected Sector: {:s}\n"
+                                "Chosen link: {:s}\n"
+                                "Updated Q-Values:\n"
+                                "  Old Q-Value: {:f}\n"
+                                "  New Q-Value: {:f}\n"
+                                "  Reward: {:f}\n"
+                                "  Forward Q-Value: {:f}\n"
+                                "  KSPL: {:d}\n"
+                                "Path Exploration: {:s}"
                                 "".format(
                                     str(selected_sector_id), str(chosen_edge),
                                     old_q_value, new_q_value, reward, forward_q_value, kspl,
@@ -328,14 +349,15 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                             globals.set_q_value(selected_sector_id, pkt_ipv4_dst, new_q_value)
 
                             _log.info(
-                                "Selected Sector: {:s}; "
-                                "Chosen link: {:s}; "
-                                "Updated Q-Values -> "
-                                "Old Q-Value: {:f}; "
-                                "New Q-Value: {:f}; "
-                                "Reward: {:f}; "
-                                "Forward Q-Value: {:f}; "
-                                "Path exploration: {:s}."
+                                "\n"
+                                "Selected Sector: {:s}\n"
+                                "Chosen link: {:s}\n"
+                                "Updated Q-Values:\n"
+                                "  Old Q-Value: {:f}\n"
+                                "  New Q-Value: {:f}\n"
+                                "  Reward: {:f}\n"
+                                "  Forward Q-Value: {:f}\n"
+                                "Path exploration: {:s}"
                                 "".format(
                                     str(selected_sector_id), str(chosen_edge),
                                     old_q_value, new_q_value, -1, forward_q_value,
@@ -388,7 +410,7 @@ def process_ipv4_generic_packet(packet_in_event):  # Generic IPv4 service manage
                         datapath_id,
                         pkt_in_port,
                         global_path_search_id,
-                        globals.register_implementation_task(global_path_search_id, "IPv4", "*")
+                        tmp_task_token
                     )
 
             except globals.ImplementationTaskExists:

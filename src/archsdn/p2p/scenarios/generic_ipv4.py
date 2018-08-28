@@ -3,9 +3,10 @@ import sys
 import logging
 from uuid import UUID
 from ipaddress import IPv4Address
-from random import random, sample
+from random import sample
 
 from archsdn.helpers import logger_module_name, custom_logging_callback
+
 
 _log = logging.getLogger(logger_module_name(__file__))
 
@@ -35,11 +36,12 @@ def activate_generic_ipv4_scenario(scenario_request):
     scenario_mpls_label = scenario_request['mpls_label']
     scenario_hash_val = scenario_request['hash_val']  # hash value which identifies the switch that sends the traffic
     path_exploration = scenario_request['path_exploration']
-    source_ipv4_str = global_path_search_id[1]
+    source_ipv4 = IPv4Address(global_path_search_id[1])
     target_ipv4_str = global_path_search_id[2]
     target_ipv4 = IPv4Address(global_path_search_id[2])
     target_host_info = central.query_address_info(ipv4=target_ipv4_str)
     this_controller_id = database.get_database_info()['uuid']
+    source_controller = UUID(global_path_search_id[0])
 
     try:
         # Maintain an active token during the duration of this task. When the task is terminated, the token will
@@ -56,21 +58,18 @@ def activate_generic_ipv4_scenario(scenario_request):
                 previous_sector_hash=scenario_hash_val  # hash value which identifies the switch that sends the traffic
             )
             # Implementation notes:
-            #  'sector_a_hash_val' is necessary for the sector controller. In the use-case where multiple switches
+            #  'scenario_hash_val' is necessary for the sector controller. In the use-case where multiple switches
             #   are connected to the same sector, the controller from that sector uses the 'sector_a_hash_val' to
-            #   distinguish between switches. The 'sector_a_hash_val' is sent in each discovery beacon, and stored
+            #   distinguish between switches. The 'scenario_hash_val' is sent in each discovery beacon, and stored
             #   by the controller which receives them.
 
             assert len(unidirectional_path), "unidirectional_path path length cannot be zero."
 
             # Allocate MPLS label for tunnel
-            if len(unidirectional_path) >= 3:
-                local_mpls_label = globals.alloc_mpls_label_id()
-            else:
-                local_mpls_label = None
+            local_mpls_label = globals.alloc_mpls_label_id()
 
             local_service_scenario = services.ipv4_generic_flow_activation(
-                unidirectional_path, local_mpls_label, scenario_mpls_label, source_ipv4=source_ipv4_str
+                unidirectional_path, local_mpls_label, scenario_mpls_label, source_ipv4=source_ipv4
             )
             # If it reached here, then it means the path was successfully activated.
             globals.set_active_scenario(
@@ -85,6 +84,7 @@ def activate_generic_ipv4_scenario(scenario_request):
                 )
             )
 
+            active_task_token = None
             return {
                 "success": True,
                 "global_path_search_id": global_path_search_id,
@@ -99,12 +99,12 @@ def activate_generic_ipv4_scenario(scenario_request):
             # Removing from the list of choices, the sector requesting the service
             adjacent_sectors_ids.remove(sector_requesting_service_id)
 
+            # Remove source controller if present
+            if source_controller in adjacent_sectors_ids:
+                adjacent_sectors_ids.remove(source_controller)
+
             if len(adjacent_sectors_ids) == 0:
                 return {"success": False, "reason": "No available sectors to explore."}
-
-            selected_link = None
-            unidirectional_path = None
-            path_exploration = False
 
             # The possible communication links to the target sector
             possible_links = []
@@ -123,6 +123,13 @@ def activate_generic_ipv4_scenario(scenario_request):
             )
 
             while possible_links:
+                # The possible communication links to the target sector
+                selected_link = None
+                bidirectional_path = None
+
+                # Socket Cache
+                socket_cache = {}
+
                 # First, lets choose a link to the adjacent sector, according to the q-value
                 links_never_used = tuple(
                     filter(
@@ -134,12 +141,12 @@ def activate_generic_ipv4_scenario(scenario_request):
                     selected_link = links_never_used[0]
                 else:
                     if path_exploration:
+                        selected_link = sample(possible_links, 1)[0]
+                    else:
                         selected_link = max(
                             possible_links,
                             key=(lambda link: globals.get_q_value((link[0], link[1]), target_ipv4))
                         )
-                    else:
-                        selected_link = sample(possible_links, 1)[0]
 
                 possible_links.remove(selected_link)   # Remove the selected link from the choice list
                 chosen_edge = selected_link[0:2]       # Chosen edge to use
@@ -175,7 +182,10 @@ def activate_generic_ipv4_scenario(scenario_request):
                 # Allocate MPLS label for tunnel (required when communicating with Sectors)
                 local_mpls_label = globals.alloc_mpls_label_id()
                 try:
-                    selected_sector_proxy = get_controller_proxy(selected_sector_id)
+                    if selected_sector_id not in socket_cache:
+                        socket_cache[selected_sector_id] = get_controller_proxy(selected_sector_id)
+                    selected_sector_proxy = socket_cache[selected_sector_id]
+
                     service_activation_result = selected_sector_proxy.activate_scenario(
                         {
                             "global_path_search_id": global_path_search_id,
@@ -187,7 +197,9 @@ def activate_generic_ipv4_scenario(scenario_request):
                     )
                 except Exception as ex:
                     globals.free_mpls_label_id(local_mpls_label)
-                    _log.debug("Sector {:s} returned the following error: {:s}".format(str(ex)))
+                    _log.debug("Sector {:s} returned the following error: {:s}".format(
+                        str(selected_sector_id), str(ex))
+                    )
                     if len(possible_links) == 0:
                         raise PathNotFound("All links to adjacent sectors have been tried.")
                     continue  # Go back to the beginning of the cycle and try again with a new link
@@ -237,14 +249,15 @@ def activate_generic_ipv4_scenario(scenario_request):
                     )
 
                     _log.info(
-                        "Selected Sector: {:s}; "
-                        "Chosen link: {:s}; "
-                        "Updated Q-Values -> "
-                        "Old Q-Value: {:f}; "
-                        "New Q-Value: {:f}; "
-                        "Reward: {:f}; "
-                        "Forward Q-Value: {:f}; "
-                        "KSPL: {:d}; "
+                        "\n"
+                        "Selected Sector: {:s}\n"
+                        "Chosen link: {:s}\n"
+                        "Updated Q-Values:\n"
+                        "  Old Q-Value: {:f}\n"
+                        "  New Q-Value: {:f}\n"
+                        "  Reward: {:f}\n"
+                        "  Forward Q-Value: {:f}\n"
+                        "  KSPL: {:d}\n"
                         "Path Exploration: {:s}."
                         "".format(
                             str(selected_sector_id), str(chosen_edge),
@@ -259,6 +272,7 @@ def activate_generic_ipv4_scenario(scenario_request):
                             len(unidirectional_path)
                         )
                     )
+                    active_task_token = None
                     return {
                         "success": True,
                         "global_path_search_id": global_path_search_id,
@@ -272,13 +286,14 @@ def activate_generic_ipv4_scenario(scenario_request):
                     globals.set_q_value(chosen_edge, target_ipv4, new_q_value)
 
                     _log.info(
-                        "Selected Sector: {:s}; "
-                        "Chosen link: {:s}; "
-                        "Updated Q-Values -> "
-                        "Old Q-Value: {:f}; "
-                        "New Q-Value: {:f}; "
-                        "Reward: {:f}; "
-                        "Forward Q-Value: {:f}; "
+                        "\n"
+                        "Selected Sector: {:s}\n"
+                        "Chosen link: {:s}\n"
+                        "Updated Q-Values:\n"
+                        "  Old Q-Value: {:f}\n"
+                        "  New Q-Value: {:f}\n"
+                        "  Reward: {:f}\n"
+                        "  Forward Q-Value: {:f}\n"
                         "Path Exploration: {:s}."
                         "".format(
                             str(selected_sector_id), str(chosen_edge),
@@ -288,45 +303,48 @@ def activate_generic_ipv4_scenario(scenario_request):
                     )
 
                     _log.error(
-                        "Failed to activate Scenario with global ID {:s} through Sector {:s}. Reason {:s}.".format(
+                        "Failed to activate Scenario with Global ID {:s} through Sector {:s}. Reason {:s}.".format(
                             str(global_path_search_id),
                             str(selected_sector_id),
                             service_activation_result["reason"]
                         )
                     )
 
-                error_str = "Failed to activate Scenario with ID {:s}. " \
-                            "Alternative adjacent sectors options is exhausted.".format(
-                                str(global_path_search_id),
-                            )
-                _log.error(error_str)
-                return {
-                    "success": False,
-                    "reason": error_str,
-                }
+            error_str = "Failed to activate Scenario with ID {:s}. " \
+                        "All possible links to adjacent sectors have been tried." \
+                        "".format(str(global_path_search_id))
+            _log.error(error_str)
+            active_task_token = None
+            return {
+                "success": False,
+                "reason": error_str,
+            }
 
     except globals.ImplementationTaskExists:
+        active_task_token = None
         error_str = "Global task with ID {:s} is already being executed".format(str(global_path_search_id))
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
     except PathNotFound:
+        active_task_token = None
         error_str = "Failed to implement path to sector {:s}. " \
                     "An available path was not found in the network.".format(
                         str(target_host_info.controller_id)
                     )
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
     except Exception as ex:
+        active_task_token = None
         error_str = "Failed to implement path to host {:s} at sector {:s}. Reason {:s}.".format(
             target_host_info.name,
             str(target_host_info.controller_id),
             str(type(ex))
         )
         _log.error(error_str)
-        custom_logging_callback(_log, logging.ERROR, *sys.exc_info())
+        custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
         return {"success": False, "reason": error_str}
 
