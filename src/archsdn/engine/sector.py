@@ -27,7 +27,7 @@ from archsdn.engine.exceptions import \
     LinkException, SwitchPortAlreadyConnected, PortNotUsed, PortNotRegistered, \
     EntitiesAlreadyConnected, EntitiesNotConnected, PathNotFound
 
-__log = logging.getLogger(logger_module_name(__file__))
+_log = logging.getLogger(logger_module_name(__file__))
 
 __net = None
 __lock = None
@@ -93,6 +93,20 @@ class SectorPath(ABC):
 class __OneDirectionPath(SectorPath):
     def __init__(self, sector_path, bandwidth_dealocation_callback, remaining_bandwidth_average=None):
         assert len(sector_path) >= 3, "sector_path length expected to be equal or higher than 3"
+
+        if not isinstance(query_entity(sector_path[0]), (Host, Sector)):
+            _log.info("sector_path: {:s}".format(str(sector_path)))
+            assert False, "first entity ID in sector path must be Host or Sector"
+
+        if not isinstance(query_entity(sector_path[-1]), (Host, Sector)):
+            _log.info("sector_path: {:s}".format(str(sector_path)))
+            assert False, "last entity ID in sector path must be Host or Sector"
+
+        for (middle_switch_id, switch_in_port, switch_out_port) in sector_path[1:-1]:
+            if not isinstance(query_entity(middle_switch_id), Switch):
+                _log.info("sector_path: {:s}".format(str(sector_path)))
+                assert False, "middle entity ID in sector path must be Switch"
+
 
         self.__sector_path = sector_path
         self.__bandwidth_dealocation_callback = bandwidth_dealocation_callback
@@ -235,6 +249,19 @@ class __OneDirectionPath(SectorPath):
 class __BiDirectionPath(SectorPath):
     def __init__(self, sector_path, bandwidth_dealocation_callback, remaining_bandwidth_average=None):
         assert len(sector_path) >= 3, "sector_path length expected to be equal or higher than 3"
+
+        if not isinstance(query_entity(sector_path[0]), (Host, Sector)):
+            _log.info("sector_path: {:s}".format(str(sector_path)))
+            assert False, "first entity ID in sector path must be Host or Sector"
+
+        if not isinstance(query_entity(sector_path[-1]), (Host, Sector)):
+            _log.info("sector_path: {:s}".format(str(sector_path)))
+            assert False, "last entity ID in sector path must be Host or Sector"
+
+        for (middle_switch_id, switch_in_port, switch_out_port) in sector_path[1:-1]:
+            if not isinstance(query_entity(middle_switch_id), Switch):
+                _log.info("sector_path: {:s}".format(str(sector_path)))
+                assert False, "middle entity ID in sector path must be Switch"
 
         self.__sector_path = sector_path
         self.__bandwidth_dealocation_callback = bandwidth_dealocation_callback
@@ -464,7 +491,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
-            __log.debug(
+            _log.debug(
                 "Attempting to connect Switch {:s} with Host {:s} through port {:d}".format(
                     str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
                 )
@@ -484,7 +511,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 raise SwitchPortAlreadyConnected(kwargs['switch_port_no'])
             max_link_speed = entity_a.ports[kwargs['switch_port_no']]['max_speed']
 
-            __log.debug(
+            _log.debug(
                 "Creating link from Switch {:s} to Host {:s} using port {:d}".format(
                     str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
                 )
@@ -496,7 +523,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'available_speed': max_link_speed
                 }
             )
-            __log.debug(
+            _log.debug(
                 "Creating link from Host {:s} to Switch {:s} using port {:d}".format(
                     str(entity_b_id), str(entity_a_id), kwargs['switch_port_no']
                 )
@@ -509,7 +536,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'available_speed': max_link_speed
                 }
             )
-            __log.debug(
+            _log.debug(
                 "Switch {:s} is now connected to Host {:s}".format(str(entity_a_id), str(entity_b_id))
             )
 
@@ -537,7 +564,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
-            __log.debug(
+            _log.debug(
                 "Attempting to connect Switch {:s} with Switch {:s} using ports {:d} and {:d}".format(
                     str(entity_a_id), str(entity_b_id), kwargs['switch_a_port_no'], kwargs['switch_b_port_no']
                 )
@@ -570,7 +597,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
             max_link_speed_a = entity_a.ports[kwargs['switch_a_port_no']]['max_speed']
             max_link_speed_b = entity_b.ports[kwargs['switch_b_port_no']]['max_speed']
 
-            __log.debug(
+            _log.debug(
                 "Creating link from Switch {:s} to Switch {:s} using port {:d}".format(
                     str(entity_a_id), str(entity_b_id), kwargs['switch_a_port_no']
                 )
@@ -584,7 +611,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'available_speed': max_link_speed_a
                 }
             )
-            __log.debug(
+            _log.debug(
                 "Creating link from Switch {:s} to Switch {:s} using port {:d}".format(
                     str(entity_b_id), str(entity_a_id), kwargs['switch_b_port_no']
                 )
@@ -598,7 +625,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'available_speed': max_link_speed_b
                 }
             )
-            __log.debug(
+            _log.debug(
                 "Switch {:s} is now connected to Switch {:s}".format(str(entity_a_id), str(entity_b_id))
             )
 
@@ -617,7 +644,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     )
                 )
 
-            __log.debug(
+            _log.debug(
                 "Attempting to connect Switch {:s} with Sector {:s} through port {:d}.".format(
                     str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
                 )
@@ -637,7 +664,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 raise SwitchPortAlreadyConnected(kwargs['switch_port_no'])
             max_link_speed = entity_a.ports[kwargs['switch_port_no']]['max_speed']
 
-            __log.debug(
+            _log.debug(
                 "Creating link from Switch {:s} to Sector {:s} using port {:d}".format(
                     str(entity_a_id), str(entity_b_id), kwargs['switch_port_no']
                 )
@@ -651,7 +678,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                 }
             )
 
-            __log.debug(
+            _log.debug(
                 "Creating link from Sector {:s} to Switch {:s} using port {:d}".format(
                     str(entity_b_id), str(entity_a_id), kwargs['switch_port_no']
                 )
@@ -664,7 +691,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
                     'hash_val': kwargs['hash_val']
                 }
             )
-            __log.debug(
+            _log.debug(
                 "Switch {:s} is now connected to Sector {:s}".format(str(entity_a_id), str(entity_b_id))
             )
 
@@ -878,8 +905,11 @@ def construct_unidirectional_path(
             # Make a copy of the network graph
             net_cpy = __net.copy()
 
+            origin_ent_is_sector = True if isinstance(query_entity(origin_id), Sector) else False
+            target_ent_is_sector = True if isinstance(query_entity(target_id), Sector) else False
+
             # If hash values are provided
-            if isinstance(query_entity(origin_id), Sector) and previous_sector_hash is not None:
+            if origin_ent_is_sector and previous_sector_hash is not None:
                 remove_links = []
                 for dst_id in net_cpy[origin_id]:
                     for port_id in net_cpy[origin_id][dst_id]:
@@ -888,11 +918,11 @@ def construct_unidirectional_path(
 
                 for (dst_id, port_id) in remove_links:
                     net_cpy.remove_edge(origin_id, dst_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
                     net_cpy.remove_edge(dst_id, origin_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
 
-            if isinstance(query_entity(target_id), Sector) and next_sector_hash is not None:
+            if target_ent_is_sector and next_sector_hash is not None:
                 remove_links = []
                 for switch_id in net_cpy[target_id]:
                     for port_id in net_cpy[target_id][switch_id]:
@@ -901,9 +931,21 @@ def construct_unidirectional_path(
 
                 for (switch_id, port_id) in remove_links:
                     net_cpy.remove_edge(target_id, switch_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((target_id, switch_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((target_id, switch_id, port_id))))
                     net_cpy.remove_edge(switch_id, target_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((switch_id, target_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((switch_id, target_id, port_id))))
+
+            # Remove Nodes which are Sectors but are neither an origin sector or a target sector.
+            # This will prevent the shortest path algorithm from choosing paths which bo through Sector Nodes in the
+            #   topology.
+            for node_id in tuple(net_cpy.nodes()):
+                if isinstance(query_entity(node_id), Sector):
+                    if not (
+                        (origin_ent_is_sector and node_id == origin_id) or
+                        (target_ent_is_sector and node_id == target_id)
+                    ):
+                        net_cpy.remove_node(node_id)
+
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
@@ -1031,7 +1073,7 @@ def construct_unidirectional_path(
                 sum(remaining_bandwidth_average) * 100.0 / len(remaining_bandwidth_average)
             )
 
-            __log.debug(
+            _log.debug(
                 "Unidirectional Path allocated{:s}\n{:s}{:s}".format(
                     " with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ".",
                     "  Path: ([{:s}])\n".format("][".join(tuple((str(i) for i in path)))),
@@ -1042,7 +1084,7 @@ def construct_unidirectional_path(
             return sector_path
 
     except nx.exception.NetworkXNoPath:
-        __log.warning(
+        _log.warning(
             "Path not found between entities {:s} and {:s}{:s}.".format(
                 str(origin_id),
                 str(target_id),
@@ -1077,8 +1119,11 @@ def construct_bidirectional_path(
             # Make a copy of the network graph
             net_cpy = __net.copy()
 
+            origin_ent_is_sector = True if isinstance(query_entity(origin_id), Sector) else False
+            target_ent_is_sector = True if isinstance(query_entity(target_id), Sector) else False
+
             # If hash values are provided
-            if isinstance(query_entity(origin_id), Sector) and previous_sector_hash is not None:
+            if origin_ent_is_sector and previous_sector_hash is not None:
                 remove_links = []
                 for dst_id in net_cpy[origin_id]:
                     for port_id in net_cpy[origin_id][dst_id]:
@@ -1087,32 +1132,42 @@ def construct_bidirectional_path(
 
                 for (dst_id, port_id) in remove_links:
                     net_cpy.remove_edge(origin_id, dst_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((origin_id, dst_id, port_id))))
                     net_cpy.remove_edge(dst_id, origin_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((dst_id, origin_id, port_id))))
 
-            if isinstance(query_entity(target_id), Sector) and next_sector_hash is not None:
+            if target_ent_is_sector and next_sector_hash is not None:
                 remove_links = []
                 for switch_id in net_cpy[target_id]:
                     for port_id in net_cpy[target_id][switch_id]:
-                        __log.debug("target_id: {:s}   switch_id: {:d}".format(str(target_id), switch_id))
-                        __log.debug("next_sector_hash: {:d}    hash_val: {:d}".format(next_sector_hash, net_cpy[target_id][switch_id][port_id]['data']['hash_val']))
+                        _log.debug("target_id: {:s}   switch_id: {:d}".format(str(target_id), switch_id))
+                        _log.debug("next_sector_hash: {:d}    hash_val: {:d}".format(next_sector_hash, net_cpy[target_id][switch_id][port_id]['data']['hash_val']))
                         if net_cpy[target_id][switch_id][port_id]['data']['hash_val'] != next_sector_hash:
                             remove_links.append((switch_id, port_id))
 
                 for (switch_id, port_id) in remove_links:
                     net_cpy.remove_edge(target_id, switch_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((target_id, switch_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((target_id, switch_id, port_id))))
                     net_cpy.remove_edge(switch_id, target_id, port_id)
-                    __log.debug("Removed edge {:s} from temporary topology.".format(str((switch_id, target_id, port_id))))
+                    _log.debug("Removed edge {:s} from temporary topology.".format(str((switch_id, target_id, port_id))))
 
+            # Remove Nodes which are Sectors but are neither an origin sector or a target sector.
+            # This will prevent the shortest path algorithm from choosing paths which bo through Sector Nodes in the
+            #   topology.
+            for node_id in tuple(net_cpy.nodes()):
+                if isinstance(query_entity(node_id), Sector):
+                    if not (
+                        (origin_ent_is_sector and node_id == origin_id) or
+                        (target_ent_is_sector and node_id == target_id)
+                    ):
+                        net_cpy.remove_node(node_id)
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
                 for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
                     if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
                         net_cpy.remove_edge(node_a, node_b, port)
-                        __log.debug(
+                        _log.debug(
                             "Removing edge {:s} for lacking enough bandwidth."
                             " {:d} is required."
                             " Only {:d} is available.".format(
@@ -1281,7 +1336,7 @@ def construct_bidirectional_path(
                 sum(remaining_bandwidth_average) * 100.0 / len(remaining_bandwidth_average) if allocated_bandwith else None
             )
 
-            __log.debug(
+            _log.debug(
                 "Bidirectional Path allocated{:s}\n{:s}{:s}".format(
                     " with reservation ({:d})".format(allocated_bandwith) if allocated_bandwith else ".",
                     "  Path: ([{:s}])\n".format("][".join(tuple((str(i) for i in path)))),
@@ -1291,7 +1346,7 @@ def construct_bidirectional_path(
             return sector_path
 
     except nx.exception.NetworkXNoPath:
-        __log.warning(
+        _log.warning(
             "Path not found between entities {:s} and {:s}{:s}.".format(
                 str(origin_id),
                 str(target_id),
