@@ -469,21 +469,26 @@ def process_icmpv4_packet(packet_in_event):
                                 _log.error(
                                     str_error
                                 )
-                            if global_path_search_id in packet_buffer:
-                                del packet_buffer[global_path_search_id]
-
                 except central.NoResultsAvailable:
+                    if global_path_search_id in packet_buffer:
+                        del packet_buffer[global_path_search_id]
                     _log.error(
                         "Target {:s} is not registered at the central manager.".format(str(pkt_ipv4_dst)))
                     custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
 
                 except PathNotFound:
+                    if global_path_search_id in packet_buffer:
+                        del packet_buffer[global_path_search_id]
                     _log.error("Failed to activate path. An available path was not found in the network.")
                     custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
 
                 except Exception as ex:
+                    if global_path_search_id in packet_buffer:
+                        del packet_buffer[global_path_search_id]
                     _log.error("Failed to activate path. Reason {:s}.".format(str(ex)))
                     custom_logging_callback(_log, logging.DEBUG, *sys.exc_info())
+
+
             #  End of Task Definition
 
             if globals.is_scenario_active(global_path_search_id):
