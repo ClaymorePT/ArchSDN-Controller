@@ -372,18 +372,18 @@ def process_icmpv4_packet(packet_in_event):
 
                             # TODO: Code for experimental use. To be removed in later release
                             time_taken = time.time() - start_time
-                            if pkt_ipv4_dst not in experimental_data:
-                                experimental_data[pkt_ipv4_dst] = []
-
-                            experimental_data[pkt_ipv4_dst].append(
-                                (time_taken, len(bidirectional_path) + service_activation_result["path_length"], path_exploration)
-                            )
-
-                            if len(experimental_data[pkt_ipv4_dst]) == 100:
-                                _log.info(
-                                    "  \n".join((str(data) for data in experimental_data[pkt_ipv4_dst]))
-                                )
-                                experimental_data[pkt_ipv4_dst] = []
+                            # if pkt_ipv4_dst not in experimental_data:
+                            #     experimental_data[pkt_ipv4_dst] = []
+                            #
+                            # experimental_data[pkt_ipv4_dst].append(
+                            #     (time_taken, len(bidirectional_path) + service_activation_result["path_length"], path_exploration)
+                            # )
+                            #
+                            # if len(experimental_data[pkt_ipv4_dst]) == 100:
+                            #     _log.info(
+                            #         "  \n".join((str(data) for data in experimental_data[pkt_ipv4_dst]))
+                            #     )
+                            #     experimental_data[pkt_ipv4_dst] = []
                             ######
 
                             _log.info(
