@@ -242,7 +242,7 @@ class ConnectEntities(unittest.TestCase):
     def test_connect_entities(self):
         sector.connect_entities(self.switch_1.id, self.host.id, switch_port_no=1)
         sector.connect_entities(self.switch_1.id, self.switch_2.id, switch_a_port_no=2, switch_b_port_no=1)
-        sector.connect_entities(self.switch_1.id, self.sector.id, switch_port_no=3)
+        sector.connect_entities(self.switch_1.id, self.sector.id, switch_port_no=3, hash_val=0x0000)
         entity_id_1 = sector.query_connected_entity_id(self.switch_1.id, 1)
         entity_id_2 = sector.query_connected_entity_id(self.switch_1.id, 2)
         entity_id_3 = sector.query_connected_entity_id(self.switch_1.id, 3)

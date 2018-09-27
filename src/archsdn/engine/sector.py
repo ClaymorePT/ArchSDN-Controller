@@ -950,7 +950,16 @@ def construct_unidirectional_path(
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
                 for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
-                    if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
+                    if __net[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
+                        _log.debug(
+                            "Removing edge {:s} for lacking enough bandwidth."
+                            " {:d} is required."
+                            " Only {:d} is available.".format(
+                                str((node_a, node_b, port)),
+                                allocated_bandwith,
+                                __net[node_a][node_b][port]['data']['available_speed']
+                            )
+                        )
                         net_cpy.remove_edge(node_a, node_b, port)
 
             shortest_path = nx.shortest_path(net_cpy, origin_id, target_id)
@@ -1165,17 +1174,17 @@ def construct_bidirectional_path(
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
                 for (node_a, node_b, port) in tuple(net_cpy.edges(keys=True)):
-                    if net_cpy[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
-                        net_cpy.remove_edge(node_a, node_b, port)
+                    if __net[node_a][node_b][port]['data']['available_speed'] < allocated_bandwith:
                         _log.debug(
                             "Removing edge {:s} for lacking enough bandwidth."
                             " {:d} is required."
                             " Only {:d} is available.".format(
                                 str((node_a, node_b, port)),
                                 allocated_bandwith,
-                                net_cpy[node_a][node_b][port]['data']['available_speed']
+                                __net[node_a][node_b][port]['data']['available_speed']
                             )
                         )
+                        net_cpy.remove_edge(node_a, node_b, port)
             # __log.debug(
             #     "edges: {:s}".format(str(tuple(net_cpy.edges)))
             # )
