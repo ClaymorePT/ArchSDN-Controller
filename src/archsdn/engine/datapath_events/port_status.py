@@ -10,7 +10,6 @@ from archsdn.engine import entities
 from archsdn import database
 
 
-
 _log = logging.getLogger(logger_module_name(__file__))
 
 
@@ -293,8 +292,6 @@ def process_event(port_change_event):
                         pass
 
                     switch.ports[port_no]['state'] = new_state
-
-
 
     else:
         raise Exception("Reason with value {:d} is unknown to specification.".format(reason_num))

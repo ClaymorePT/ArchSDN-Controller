@@ -3,6 +3,7 @@ import argparse
 import ipaddress
 from uuid import UUID
 
+
 def validate_path(location):
     if location == ":memory:":
         return location
@@ -25,7 +26,6 @@ def validate_id(id):
         raise argparse.ArgumentTypeError("Controller ID is invalid: {:s}.".format(str(id)))
 
 
-
 def validate_address(address):
     try:
         ip = ipaddress.ip_address(address)
@@ -38,6 +38,7 @@ def validate_address(address):
     except Exception:
         raise argparse.ArgumentTypeError("Invalid IP address: {:s}".format(address))
 
+
 def validate_ipv4network(address):
     try:
         ip = ipaddress.IPv4Network(address)
@@ -48,6 +49,7 @@ def validate_ipv4network(address):
     except Exception:
         raise argparse.ArgumentTypeError("Invalid IPv4 network address: {:s}".format(address))
 
+
 def validate_ipv6network(address):
     try:
         ip = ipaddress.IPv6Network(address)
@@ -57,6 +59,7 @@ def validate_ipv6network(address):
             raise argparse.ArgumentTypeError("Invalid IPv6 network address: {:s}".format(address))
     except Exception:
         raise argparse.ArgumentTypeError("Invalid IPv6 network address: {:s}".format(address))
+
 
 def validate_port(port):
     try:

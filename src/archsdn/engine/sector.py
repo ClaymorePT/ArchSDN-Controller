@@ -459,7 +459,7 @@ def is_entity_registered(entity_id):
 
 
 def connect_entities(entity_a_id, entity_b_id, **kwargs):
-    '''
+    """
         This method connects two entities. There are three possible combinations.
             1 - (Switch, Host)
             2 - (Switch, Switch)
@@ -469,7 +469,7 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
         :param entity_b_id:
         :param kwargs: 1- switch_port_no; 2- (switch_a_port_no, switch_b_port_no); 3- (port_no, sector_id)
         :return: None
-    '''
+    """
     assert __sector_initialized, "sector not initialised"
 
     with __lock:
@@ -705,12 +705,11 @@ def connect_entities(entity_a_id, entity_b_id, **kwargs):
 
 
 def query_connected_entity_id(switch_id, port_id):
-    '''
-
+    """
     :param switch_id: Switch entity ID
     :param port_id: Switch Port
     :return:
-    '''
+    """
     assert __sector_initialized, "sector not initialised"
     assert isinstance(port_id, int), \
         "switch_a_port_no type expected to be int. Got {:s}".format(type(port_id).__name__)
@@ -775,11 +774,11 @@ def query_address_host(ipv4=None, ipv6=None):
 
 
 def is_port_connected(switch_id, port_id):
-    '''
+    """
     :param switch_id: Switch entity ID
     :param port_id: Switch Port
     :return:
-    '''
+    """
     assert __sector_initialized, "sector not initialised"
     assert isinstance(port_id, int), \
         "switch_a_port_no type expected to be int. Got {:s}".format(type(port_id).__name__)
@@ -807,7 +806,7 @@ def are_entities_connected(entity_a_id, entity_b_id):
 
 
 def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
-    '''
+    """
         This method connects two entities. There are three possible combinations.
         1 - (Switch, Host)
         2 - (Switch, Switch)
@@ -817,7 +816,7 @@ def disconnect_entities(entity_a_id, entity_b_id, port_a=None):
         :param entity_b_id:
         :param port_a:
         :return:
-    '''
+    """
 
     assert __sector_initialized, "sector not initialised"
     if not isinstance(port_a, (int, type(None))):
@@ -945,7 +944,6 @@ def construct_unidirectional_path(
                         (target_ent_is_sector and node_id == target_id)
                     ):
                         net_cpy.remove_node(node_id)
-
 
             # Remove edges that cannot fulfill the required bandwidth
             if allocated_bandwith:
@@ -1112,10 +1110,10 @@ def construct_bidirectional_path(
         previous_sector_hash=None,
         next_sector_hash=None
 ):
-    '''
+    """
         Constructs the scenario specified by :param scenario_type.
 
-    '''
+    """
 
     try:
         with __lock:
@@ -1342,7 +1340,7 @@ def construct_bidirectional_path(
                     allocated_bandwith,
                     edges
                 ),
-                sum(remaining_bandwidth_average) * 100.0 / len(remaining_bandwidth_average) if allocated_bandwith else None
+                sum(remaining_bandwidth_average)*100.0/len(remaining_bandwidth_average) if allocated_bandwith else None
             )
 
             _log.debug(

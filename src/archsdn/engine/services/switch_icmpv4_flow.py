@@ -805,8 +805,6 @@ def __icmpv4_flow_activation_host_to_sector(
     return icmpv4_service
 
 
-
-
 def __icmpv4_flow_activation_sector_to_host(
         bidirectional_path, sector_mpls_label, local_mpls_label, source_ipv4
 ):
@@ -1161,7 +1159,6 @@ def __icmpv4_flow_activation_sector_to_host(
     mapped_icmpv4_services[(source_ipv4, host_entity_obj.ipv4)] = icmpv4_service
 
     return icmpv4_service
-
 
 
 __activators = {

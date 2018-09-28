@@ -45,11 +45,6 @@ def initialize_server(ip, port):
                         received_bytes += len(data_bytes)
                     else:
                         return
-                    # _log.debug(
-                    #     "need_to_receive: {:d} data_bytes received: {:d};".format(
-                    #         2-received_bytes, len(data_bytes)
-                    #     )
-                    # )
                 msg_len = struct.unpack("!H", buf)[0]
 
                 # Then, receive the encoded request
@@ -62,7 +57,6 @@ def initialize_server(ip, port):
                         received_bytes += len(data_bytes)
                     else:
                         return
-                    # _log.debug("data_bytes: {:d} - {}".format(len(data_bytes), data_bytes))
 
                 func_name = None
                 try:

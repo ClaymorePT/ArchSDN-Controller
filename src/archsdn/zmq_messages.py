@@ -36,15 +36,15 @@ def loads(obj_bytes):
     assert obj_name in __loading_dict, "class {:s} not registered".format(obj_name)
     return __loading_dict[obj_name](obj_state)
 
-########################
-## Abstract Messages ###
-########################
 
+#######################
+# Abstract Messages ###
+#######################
 
 class BaseMessage(ABC):
-    '''
+    """
         Abstract Base Message for all message types
-    '''
+    """
     _version = 1
 
     @abstractmethod
@@ -70,35 +70,35 @@ class BaseMessage(ABC):
 
 
 class BaseError(BaseMessage, BaseException):
-    '''
+    """
         Abstract Base Message for Errors
-    '''
+    """
     pass
 
 
 class RequestMessage(BaseMessage):
-    '''
+    """
         Abstract Base Message for Requests
-    '''
+    """
     pass
 
 
 class ReplyMessage(BaseMessage):
-    '''
+    """
         Abstract Base Message for Replies
-    '''
+    """
     pass
 
 
-########################
-### Request Messages ###
-########################
+######################
+# Request Messages ###
+######################
 
 class REQWithoutState(RequestMessage):
-    '''
+    """
         Base Message for messages which have no internal state.
         It implements the __getstate__ and __setstate__ for no state serialization.
-    '''
+    """
     def __getstate__(self):
         return False
 
@@ -107,32 +107,32 @@ class REQWithoutState(RequestMessage):
 
 
 class REQLocalTime(REQWithoutState):
-    '''
+    """
         Message used to request the central time.
         Used mostly for debug.
-    '''
+    """
     pass
 
 
 class REQCentralNetworkPolicies(REQWithoutState):
-    '''
+    """
         Message used to request the network centralized policies-
-    '''
+    """
     pass
 
 
 class REQRegisterController(RequestMessage):
-    '''
+    """
         Message used to register controllers at the central manager.
         Attributes:
             - Controller ID - (uuid.UUID)
             - Controller IPv4 Info Tuple
               - IPv4 (ipaddress.IPv4Address)
-              - Port (int) [0;0xFFFF]
+              - Port (int) [0:0xFFFF]
             - Controller IPv6 Info Tuple
               - IPv6 (ipaddress.IPv6Address)
-              - Port (int) [0;0xFFFF]
-    '''
+              - Port (int) [0:0xFFFF]
+    """
 
     def __init__(self, controller_id, ipv4_info=None, ipv6_info=None):
         assert isinstance(controller_id, UUID), "uuid is not a uuid.UUID object instance"
@@ -167,11 +167,11 @@ class REQRegisterController(RequestMessage):
 
 
 class REQQueryControllerInfo(RequestMessage):
-    '''
+    """
         Message used to request the detailed information about a controller.
         Attributes:
             - Controller ID - (uuid.UUID)
-    '''
+    """
     def __init__(self, controller_id):
         assert isinstance(controller_id, UUID), "uuid is not a uuid.UUID object instance"
 
@@ -185,11 +185,11 @@ class REQQueryControllerInfo(RequestMessage):
 
 
 class REQUnregisterController(RequestMessage):
-    '''
+    """
         Message used to remove a Controller registration.
         Attributes:
             - Controller ID - (uuid.UUID)
-    '''
+    """
 
     def __init__(self, controller_id):
         assert isinstance(controller_id, UUID), "uuid is not a uuid.UUID object instance"
@@ -204,11 +204,11 @@ class REQUnregisterController(RequestMessage):
 
 
 class REQIsControllerRegistered(RequestMessage):
-    '''
+    """
         Message used to check if a Controller is Registered.
         Attributes:
             - Controller ID - (uuid.UUID)
-    '''
+    """
 
     def __init__(self, controller_id):
         assert isinstance(controller_id, UUID), "uuid is not a uuid.UUID object instance"
@@ -223,17 +223,17 @@ class REQIsControllerRegistered(RequestMessage):
 
 
 class REQUpdateControllerInfo(RequestMessage):
-    '''
+    """
         Message used to update the controller information
         Attributes:
             - Controller ID - (uuid.UUID)
             - Controller IPv4 Info Tuple
               - IPv4 (ipaddress.IPv4Address)
-              - Port (int) [0;0xFFFF]
+              - Port (int) [0:0xFFFF]
             - Controller IPv6 Info Tuple
               - IPv6 (ipaddress.IPv6Address)
-              - Port (int) [0;0xFFFF]
-    '''
+              - Port (int) [0:0xFFFF]
+    """
 
     def __init__(self, controller_id, ipv4_info=None, ipv6_info=None):
         assert isinstance(controller_id, UUID), "uuid is not a uuid.UUID object instance"
@@ -260,12 +260,13 @@ class REQUpdateControllerInfo(RequestMessage):
 
 
 class REQRegisterControllerClient(RequestMessage):
-    '''
+    """
         Message used to Register a network Client.
         Attributes:
             - Controller ID - (uuid.UUID)
-            - Client ID - (int) [0;0xFFFFFFFF]
-    '''
+            - Client ID - (int) [0:0xFFFFFFFF]
+    """
+
     def __init__(self, controller_id, client_id):
         assert isinstance(controller_id, UUID), \
             "uuid is not a uuid.UUID object instance: {:s}".format(repr(controller_id))
@@ -286,12 +287,12 @@ class REQRegisterControllerClient(RequestMessage):
 
 
 class REQRemoveControllerClient(RequestMessage):
-    '''
+    """
         Message used to Remove a network Client Registration.
         Attributes:
             - Controller ID - (uuid.UUID)
-            - Client ID - (int) [0;0xFFFFFFFF]
-    '''
+            - Client ID - (int) [0:0xFFFFFFFF]
+    """
     def __init__(self, controller_id, client_id):
         assert isinstance(controller_id, UUID), \
             "uuid is not a uuid.UUID object instance: {:s}".format(repr(controller_id))
@@ -312,12 +313,12 @@ class REQRemoveControllerClient(RequestMessage):
 
 
 class REQIsClientAssociated(RequestMessage):
-    '''
+    """
         Message used to query if a specific network Client registration exists.
         Attributes:
             - Controller ID - (uuid.UUID)
-            - Client ID - (int) [0;0xFFFFFFFF]
-    '''
+            - Client ID - (int) [0:0xFFFFFFFF]
+    """
     def __init__(self, controller_id, client_id):
         assert isinstance(controller_id, UUID), \
             "uuid is not a uuid.UUID object instance: {:s}".format(repr(controller_id))
@@ -338,12 +339,12 @@ class REQIsClientAssociated(RequestMessage):
 
 
 class REQClientInformation(RequestMessage):
-    '''
+    """
         Message used to query the information of a specific network Client registration.
         Attributes:
             - Controller ID - (uuid.UUID)
-            - Client ID - (int) [0;0xFFFFFFFF]
-    '''
+            - Client ID - (int) [0:0xFFFFFFFF]
+    """
     def __init__(self, controller_id, client_id):
         assert isinstance(controller_id, UUID), \
             "uuid is not a uuid.UUID object instance: {:s}".format(repr(controller_id))
@@ -364,11 +365,11 @@ class REQClientInformation(RequestMessage):
 
 
 class REQUnregisterAllClients(RequestMessage):
-    '''
+    """
         Message used to remove all client registrations from a Controller.
         Attributes:
             - Controller ID - (uuid.UUID)
-    '''
+    """
 
     def __init__(self, controller_id):
         assert isinstance(controller_id, UUID), "uuid is not a uuid.UUID object instance"
@@ -383,13 +384,13 @@ class REQUnregisterAllClients(RequestMessage):
 
 
 class REQAddressInfo(RequestMessage):
-    '''
+    """
         Message used to request information about the network addresses.
         Attributes (one is required):
               - IPv4 (ipaddress.IPv4Address) - Optional
               - IPv6 (ipaddress.IPv6Address) - Optional
 
-    '''
+    """
 
     def __init__(self, ipv4=None, ipv6=None):
         assert not ((ipv4 is None) and (ipv6 is None)), "ipv4 and ipv6 cannot be null at the same time"
@@ -425,14 +426,14 @@ __register_msg(REQUnregisterAllClients)
 __register_msg(REQAddressInfo)
 
 
-########################
-###  Reply Messages  ###
-########################
+######################
+#  Reply Messages  ###
+######################
 
 class RPLWithoutState(ReplyMessage):
-    '''
+    """
         Base Message for Replies with no state
-    '''
+    """
     def __getstate__(self):
         return False
 
@@ -441,30 +442,30 @@ class RPLWithoutState(ReplyMessage):
 
 
 class RPLSuccess(RPLWithoutState):
-    '''
+    """
         Message returned when a Request is successfully processed.
-    '''
+    """
     pass
 
 
 class RPLAfirmative(RPLWithoutState):
-    '''
+    """
         Afirmative Message returned as the result of the evaluation of a Proposition Request Message
-    '''
+    """
     pass
 
 
 class RPLNegative(RPLWithoutState):
-    '''
+    """
         Message returned when a Request is successfully processed.
-    '''
+    """
     pass
 
 
 class RPLLocalTime(ReplyMessage):
-    '''
+    """
         Message used to reply the local time.
-    '''
+    """
     def __init__(self):
         self.__time = time.time()
 
@@ -476,9 +477,9 @@ class RPLLocalTime(ReplyMessage):
 
 
 class RPLCentralNetworkPolicies(ReplyMessage):
-    '''
+    """
         Message used to reply the network policies configurations
-    '''
+    """
 
     def __init__(
             self,
@@ -515,9 +516,9 @@ class RPLCentralNetworkPolicies(ReplyMessage):
 
 
 class RPLControllerInformation(ReplyMessage):
-    '''
+    """
         Message used by central manager to reply with the controller information
-    '''
+    """
 
     def __init__(self, ipv4, ipv4_port, ipv6, ipv6_port, name, registration_date):
         assert isinstance(ipv4, (IPv4Address, type(None))), "ipv4 expected to be IPv4Address or None"
@@ -552,9 +553,9 @@ class RPLControllerInformation(ReplyMessage):
 
 
 class RPLClientInformation(ReplyMessage):
-    '''
+    """
         Message used by central manager to reply with the controller information
-    '''
+    """
 
     def __init__(self, ipv4, ipv6, name, registration_date):
         self.ipv4 = ipv4
@@ -578,9 +579,9 @@ class RPLClientInformation(ReplyMessage):
 
 
 class RPLAddressInfo(ReplyMessage):
-    '''
+    """
         Message used by the central manager to reply with the information about the queried network address
-    '''
+    """
 
     def __init__(self, controller_id, client_id, name, registration_date):
         assert isinstance(controller_id, UUID), \
@@ -618,20 +619,15 @@ __register_msg(RPLControllerInformation)
 __register_msg(RPLClientInformation)
 __register_msg(RPLAddressInfo)
 
-###########################
-## Subscription Messages ##
-###########################
 
-
-########################
-###  Error Messages  ###
-########################
-
+######################
+#  Error Messages  ###
+######################
 
 class RPLGenericError(BaseError):
-    '''
+    """
         Message used to reply a generic error
-    '''
+    """
     def __init__(self, reason):
         assert isinstance(reason, str), "reason argument is not a string"
         self.reason = reason
@@ -647,9 +643,9 @@ class RPLGenericError(BaseError):
 
 
 class RPLErrorNoState(BaseError):
-    '''
+    """
         Error message with no state
-    '''
+    """
 
     def __init__(self):
         pass
@@ -662,51 +658,51 @@ class RPLErrorNoState(BaseError):
 
 
 class RPLNoResultsAvailable(RPLErrorNoState):
-    '''
+    """
          Error message to reply the absence of results
-    '''
+    """
     pass
 
 
 class RPLControllerNotRegistered(RPLErrorNoState):
-    '''
+    """
        Error message to reply the absence of a controller registration
-    '''
+    """
     pass
 
 
 class RPLControllerAlreadyRegistered(RPLErrorNoState):
-    '''
+    """
        Error message to reply that a controller registration already exists
-    '''
+    """
     pass
 
 
 class RPLClientNotRegistered(RPLErrorNoState):
-    '''
+    """
        Error message to reply the absence of a network client registration
-    '''
+    """
     pass
 
 
 class RPLClientAlreadyRegistered(RPLErrorNoState):
-    '''
+    """
        Error message to reply that a network client registration already exists
-    '''
+    """
     pass
 
 
 class RPLIPv4InfoAlreadyRegistered(RPLErrorNoState):
-    '''
+    """
        Error message to reply that a specific IPv4 is already being used
-    '''
+    """
     pass
 
 
 class RPLIPv6InfoAlreadyRegistered(RPLErrorNoState):
-    '''
+    """
         Error message to reply that a specific IPv6 is already being used
-    '''
+    """
     pass
 
 

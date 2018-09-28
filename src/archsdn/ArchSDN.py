@@ -4,7 +4,7 @@ import signal
 from pathlib import Path
 
 from uuid import uuid4, UUID
-from ipaddress import IPv4Address, IPv6Address, ip_address
+from ipaddress import IPv4Address, ip_address
 from netaddr import mac_eui48
 
 from ryu.cfg import CONF

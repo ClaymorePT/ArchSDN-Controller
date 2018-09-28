@@ -67,9 +67,6 @@ def process_event(flow_removed_event):
                     )
                 )
 
-
-
-
     else:
         _log.info("Unsupported flow removed reason value: {:d}".format(msg.reason))
 

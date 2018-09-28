@@ -1,6 +1,5 @@
 import blosc
 import logging
-from eventlet import sleep
 from eventlet.green import zmq
 from eventlet.semaphore import BoundedSemaphore
 from archsdn import zmq_messages
@@ -61,6 +60,7 @@ class IPv4InfoAlreadyRegistered(CentralException):
 
 class IPv6InfoAlreadyRegistered(CentralException):
     pass
+
 
 class NoResultsAvailable(CentralException):
     pass

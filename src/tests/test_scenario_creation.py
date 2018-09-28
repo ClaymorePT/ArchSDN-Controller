@@ -1,6 +1,5 @@
 import unittest
 from ipaddress import IPv4Address, IPv6Address
-from uuid import UUID
 
 from netaddr import EUI
 

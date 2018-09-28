@@ -1,4 +1,4 @@
-'''
+"""
 
 This module implements the P2P communication server.
 Peers communicate by sending messages from one to another.
@@ -16,7 +16,7 @@ Requests are structured as tuples:
 Replies are structured as tuples:
 (Reply name, result structure)
 
-'''
+"""
 
 __all__ = [
     "get_controller_proxy",

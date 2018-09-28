@@ -1,6 +1,6 @@
 import logging
 
-from ryu.ofproto import ether, inet
+from ryu.ofproto import ether
 
 from archsdn.helpers import logger_module_name
 from archsdn.engine import globals
@@ -299,8 +299,6 @@ def __ipv4_flow_activation_host_to_host(unidirectional_path, mpls_label):
     ipv4_service = __GenericIPv4Service(unidirectional_path, tunnel_flows, mpls_label)
     mapped_ipv4_services[(host_a_entity_obj.ipv4, host_b_entity_obj.ipv4)] = ipv4_service
     return ipv4_service
-
-
 
 
 def __ipv4_flow_activation_host_to_sector(unidirectional_path, local_mpls_label, target_ipv4):

@@ -72,14 +72,12 @@ class DatabaseDatapathsOperations(unittest.TestCase):
         database.remove_datapath(datapath_id=1)
         self.assertFalse(database.is_datapath_registered(datapath_id=1))
 
-
     def test_dump_datapath_ids(self):
         database.register_datapath(datapath_id=1, ipv4_info=(IPv4Address("192.168.1.1"), 12345),
                                    ipv6_info=(IPv6Address(1), 12345))
         database.register_datapath(datapath_id=2, ipv4_info=(IPv4Address("192.168.1.2"), 12345),
                                    ipv6_info=(IPv6Address(2), 12345))
         self.assertEqual(database.dump_datapth_registered_ids(), (1, 2))
-
 
     def test_query_datapath_info(self):
         database.register_datapath(datapath_id=1, ipv4_info=(IPv4Address("192.168.1.1"), 12345),
@@ -140,7 +138,6 @@ class DatabaseClientsOperations(unittest.TestCase):
         self.assertEqual(client_info["ipv6"], IPv6Address(1))
         self.assertLessEqual(client_info["registration_date"], time.localtime())
 
-
     def test_dump_datapath_clients(self):
         client_id_1 = database.register_client(datapath_id=1, port_id=1, mac=EUI(12))
         client_id_2 = database.register_client(datapath_id=1, port_id=2, mac=EUI(13))
@@ -148,7 +145,6 @@ class DatabaseClientsOperations(unittest.TestCase):
         client_id_4 = database.register_client(datapath_id=2, port_id=2, mac=EUI(15))
         self.assertEqual(database.dump_datapth_registered_clients_ids(1), (client_id_1, client_id_2))
         self.assertEqual(database.dump_datapth_registered_clients_ids(2), (client_id_3, client_id_4))
-
 
     def test_double_register_client(self):
         client_id = database.register_client(datapath_id=1, port_id=1, mac=EUI(10))
