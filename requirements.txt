@@ -1,6 +1,6 @@
-pyzmq==16.0.4
 netaddr==0.7.19
 networkx==2.1
 blosc==1.5.1
-ryu==4.22
-scapy-python3==0.23
+ryu==4.27
+scapy-python3==0.25
+pyzmq==17.1.2

@@ -3,6 +3,7 @@ import argparse
 import ipaddress
 from uuid import UUID
 
+
 def validate_path(location):
     if location == ":memory:":
         return location
@@ -25,7 +26,6 @@ def validate_id(id):
         raise argparse.ArgumentTypeError("Controller ID is invalid: {:s}.".format(str(id)))
 
 
-
 def validate_address(address):
     try:
         ip = ipaddress.ip_address(address)
@@ -38,6 +38,7 @@ def validate_address(address):
     except Exception:
         raise argparse.ArgumentTypeError("Invalid IP address: {:s}".format(address))
 
+
 def validate_ipv4network(address):
     try:
         ip = ipaddress.IPv4Network(address)
@@ -48,6 +49,7 @@ def validate_ipv4network(address):
     except Exception:
         raise argparse.ArgumentTypeError("Invalid IPv4 network address: {:s}".format(address))
 
+
 def validate_ipv6network(address):
     try:
         ip = ipaddress.IPv6Network(address)
@@ -57,6 +59,7 @@ def validate_ipv6network(address):
             raise argparse.ArgumentTypeError("Invalid IPv6 network address: {:s}".format(address))
     except Exception:
         raise argparse.ArgumentTypeError("Invalid IPv6 network address: {:s}".format(address))
+
 
 def validate_port(port):
     try:
@@ -72,26 +75,60 @@ def validate_port(port):
 def parse_arguments():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--logLevel", help="Logging Level (default: %(default)s)", type=str,
-                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO")
-    parser.add_argument("-s", "--storage", help="SQLite3 Database Location (default: %(default)s)",
-                        type=validate_path, default=':memory:')
     parser.add_argument(
-        "-id", "--uuid", help="Controller UUID (default: %(default)s)", default='random', type=validate_id
+        "-l", "--logLevel",
+        help="Logging Level (default: %(default)s)",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+        type=str
+    )
+    # parser.add_argument(
+    #     "-s", "--storage",
+    #     help="SQLite3 Database Location (default: %(default)s)",
+    #     default=':memory:',
+    #     type=validate_path
+    # )
+    parser.add_argument(
+        "-id", "--uuid",
+        help="Controller UUID (default: %(default)s)",
+        default='random',
+        type=validate_id
     )
     parser.add_argument(
-        "-ip", "--ip", help="Controller IP (default: %(default)s)", default='0.0.0.0', type=validate_address
+        "-ip", "--ip",
+        help="Controller IP (default: %(default)s)",
+        default='0.0.0.0',
+        type=validate_address
     )
     parser.add_argument(
-        "-p", "--port", help="Controller Port (default: %(default)s)", type=int, default=12345
+        "-p", "--port",
+        help="Controller Port (default: %(default)s)",
+        default=54321,
+        type=int
     )
-    parser.add_argument("-cip", "--cip", help="Central Management Server IP ", type=validate_address)
     parser.add_argument(
-        "-cp", "--cport", help="Central Management Server Port (default: %(default)s)", type=int, default=12345
+        "-cip", "--cip",
+        help="Central Management Server IP (default: %(default)s)",
+        default='127.0.0.1',
+        type=validate_address
     )
-    parser.add_argument("-ofip", "--ofip", help="OpenFlow Service IP ", type=validate_address)
     parser.add_argument(
-        "-ofp", "--ofport", help="OpenFlow Service Port (default: %(default)s)", type=int, default=6631
+        "-cp", "--cport",
+        help="Central Management Server Port (default: %(default)s)",
+        default=12345,
+        type=int
+    )
+    parser.add_argument(
+        "-ofip", "--ofip",
+        help="OpenFlow Service IP ",
+        default='0.0.0.0',
+        type=validate_address
+    )
+    parser.add_argument(
+        "-ofp", "--ofport",
+        help="OpenFlow Service Port (default: %(default)s)",
+        default=6631,
+        type=int
     )
 
     return parser.parse_args()

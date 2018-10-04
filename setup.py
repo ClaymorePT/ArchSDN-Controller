@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 # coding=utf-8
 
-'''
+"""
     python distribute file
-'''
-
-# from __future__ import (absolute_import, division, print_function,
-#                         unicode_literals, with_statement)
+"""
 
 from setuptools import setup, find_packages
 
 
 def requirements_file_to_list(fn='requirements.txt'):
-    '''
+    """
         read a requirements file and create a list that can be used in setup.
-    '''
+    """
     with open(fn, 'r') as f:
         return [x.rstrip() for x in list(f) if x and not x.startswith('#')]
 
@@ -41,7 +38,7 @@ setup(
     keywords='SDN OpenFlow Management',
     license='GPLv3',
     classifiers=[
-        'Development Status :: 5 - Production/Stable',
+        'Development Status :: 3 - Alpha',
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Programming Language :: Python :: 3.6',
     ]

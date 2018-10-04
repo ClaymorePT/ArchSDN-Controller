@@ -7,8 +7,9 @@ __pwd = Path(environ["PWD"])
 
 
 def __byteStr2HexStr(byteStr):
-    assert type(byteStr) is bytes, "byteStr is not a byte string, got " + str(type(byteStr))
-    return ''.join([str.format("{:02X}", ord(bytes([x]))) for x in byteStr]).strip()
+    assert isinstance(byteStr, (bytes, bytearray)), \
+        "byteStr expected to be bytes or bytearray. Got {:s}".format(str(type(byteStr)))
+    return ''.join(["{:02X}".format(ord(bytes([x]))) for x in byteStr]).strip()
 
 
 def __detailed_trace(ex_type, ex_value, ex_tb):
@@ -49,11 +50,14 @@ def __detailed_trace(ex_type, ex_value, ex_tb):
                     value = frame.f_locals[name]
                     value_str = str(value)
                     if isinstance(value, (bytearray, bytes)):
-                        value_lst = list((__byteStr2HexStr(value[i:i + max_hex_line_len]) for i in
-                                          range(0, len(value), max_hex_line_len)))
-                        result.append("    self.{:s}: {:s}".format(name, value_lst[0]))
-                        for line in value_lst[1:]:
-                            result.append("               {:s}".format(line))
+                        if len(value):
+                            value_lst = tuple((__byteStr2HexStr(value[i:i + max_hex_line_len]) for i in
+                                              range(0, len(value), max_hex_line_len)))
+                            result.append("    self.{:s}: {:s}".format(name, value_lst[0]))
+                            for line in value_lst[1:]:
+                                result.append("               {:s}".format(line))
+                        else:
+                            result.append("    self.{:s}: ''".format(name))
                     elif (len(value_str) == 0) and (not isinstance(value, str)):
                         value_str = repr(value)
                         result.append("    self.{:s} = {:s}".format(name, value_str))

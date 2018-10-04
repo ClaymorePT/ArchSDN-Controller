@@ -7,7 +7,7 @@
 # ... except these specific files
 !/.gitignore
 !/LICENSE.txt
-!/README.rst
+!/README.md
 !/requirements.txt
 !/setup.py
 
