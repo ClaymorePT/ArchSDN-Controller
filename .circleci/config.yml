@@ -1,0 +1,44 @@
+# Python CircleCI 2.1 configuration file
+#
+
+version: 2.1
+
+executors:
+  python_executor:
+    docker:
+      - image: python:3.6.9
+
+
+jobs:
+  execute-test-units:
+    executor: python_executor
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      - run:
+          name: install dependencies
+          command: |
+            pip install -r requirements.txt
+
+      # run tests!
+      - run:
+          name: run tests
+          command: |
+            cd ~/repo
+            python setup.py test &> ./complete-test-report.txt
+
+      - store_artifacts:
+          path: complete-test-report.txt
+          destination: complete-test-report.txt
+
+
+workflows:
+  version: 2.1
+  workflows-run-test-units:
+    jobs:
+      - execute-test-units:
+          filters:
+            branches:
+              ignore:
+                - master
