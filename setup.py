@@ -34,7 +34,7 @@ setup(
     maintainer='Carlos Miguel Ferreira',
     maintainer_email='cmf@av.it.pt',
     description='SDN controller for OpenFlow enabled networks',
-    long_description=open('README.rst').read(),
+    long_description=open('README.md').read(),
     keywords='SDN OpenFlow Management',
     license='GPLv3',
     classifiers=[
