@@ -1,5 +1,7 @@
 # ArchSDN Distributed Controller
 
+[![CircleCI](https://circleci.com/gh/ClaymorePT/ArchSDN-Controller.svg?style=svg)](https://circleci.com/gh/ClaymorePT/ArchSDN-Controller)
+
 ### Introduction
 This is the source code for the ArchSDN Distributed Controller, an OpenFlow controller with distributed and autonomous 
 management capabilities.
